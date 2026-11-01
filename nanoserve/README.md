@@ -11,6 +11,7 @@ implementation.
 | 3 | Continuous-batching scheduler: mixed prefill + decode, preemption when blocks run out | ✅ |
 | 4 | OpenAI-compatible streaming server, measured with [`benchmarks/`](../benchmarks/README.md) | ✅ |
 | 5 | Head-to-head with `vllm serve` on the same GPU, with a write-up of the gap | ✅ |
+| 6 | Batched paged attention: one gather + one SDPA call per layer for the whole batch | ✅ on CPU; GPU not re-measured |
 
 ## Design
 
@@ -58,10 +59,11 @@ sequence together, freeing blocks as sequences hit EOS. On an M-series CPU
 with 8 prompts, it produces output identical to running them one at a time,
 **3.1× faster** (97 vs 31 tok/s).
 
-**Limitation:** attention gathers each sequence's blocks into a contiguous
-tensor, then runs SDPA per sequence in a Python loop. That's correct but slow.
-vLLM's PagedAttention kernel reads K/V straight from the scattered blocks
-inside the kernel, for the whole batch at once.
+**Limitation (fixed in step 6):** attention originally gathered each
+sequence's blocks into a contiguous tensor, then ran SDPA per sequence in a
+Python loop. That's correct but slow. vLLM's PagedAttention kernel reads K/V
+straight from the scattered blocks inside the kernel, for the whole batch at
+once.
 
 ## Continuous batching (step 3)
 
@@ -232,6 +234,43 @@ order of what the profile says would help most:
    kernels: fewer launches and fewer round trips to GPU memory.
 4. **GPU-side sampling and overlapped scheduling.** Smaller wins once 1–3 are
    done.
+
+## Batched paged attention (step 6)
+
+Fix #1 from the list above, in plain PyTorch. `begin_step` now builds the
+attention metadata once per step: a padded block table `[B, max_blocks]`, a
+mask, and where each token sits in the padded layout. All 24 layers reuse it.
+Each layer then does **one gather and one SDPA call for the whole batch**,
+instead of a block-table tensor, gather, two `repeat_interleave`s, a mask and
+an SDPA call per sequence.
+
+- **Decodes and prefills are batched separately.** Padding to the longest
+  sequence in the batch is fine for decodes (1 query each), but padding a
+  decode to the length of a 512-token prompt chunk would multiply its work by
+  512.
+- **GQA without copying K/V.** Query head `h` reads KV head `h // group`, so
+  the `group` query heads per KV head are folded into the query-length
+  dimension: `[B, kv_heads, max_new * group, d]`. SDPA then sees plain
+  multi-head attention with `kv_heads` heads. This works on any torch version
+  (SDPA's `enable_gqa` needs 2.5+).
+- **Padding is masked.** Padded key slots point at block 0 and are masked out;
+  padded query rows can see key 0 so they never softmax over nothing, and are
+  dropped afterwards.
+
+Decode step on an M-series CPU, fp32, ~256-token context (`profile_step.py`):
+
+| Batch | Before | After | Speedup | Attention share of CPU time |
+|---|---|---|---|---|
+| 1 | ~35 ms | ~34 ms | — | 20% → 9% |
+| 16 | 120 ms (133 tok/s) | 61 ms (261 tok/s) | 2.0× | 60% → 14% |
+| 64 | 347 ms (185 tok/s) | 112 ms (572 tok/s) | 3.1× | 78% → 23% |
+
+The work that grew with the batch is gone; what's left is mostly the MLP and
+per-op launch overhead. On the GPU the gain should be larger, since there the
+loop was ~630 kernel launches per sequence while the GPU sat 86% idle. That
+hasn't been re-measured; rerun `benchmarks/compare_engines.sh` to get it. The
+next fix on the list is CUDA graphs, for the launch overhead that's still
+there at batch 1.
 
 ## Usage
 
