@@ -6,7 +6,7 @@ Fills the engine with a batch of requests, runs their prefill, then profiles
 a few pure-decode steps with torch.profiler and reports where the time goes.
 
 On a GPU, the key number is GPU busy time / wall time per step. nanoserve
-launches hundreds of small kernels per step from Python (per layer, per
+launches thousands of small kernels per step from Python (per layer, per
 sequence in the attention loop), so the GPU idles between launches. vLLM
 removes most of that gap with fused kernels (one PagedAttention kernel for
 the whole batch) and CUDA graphs (the whole decode step replayed as one launch).
@@ -65,22 +65,33 @@ def main():
           f"{step_ms:.1f} ms/step = {1000 * args.batch / step_ms:.0f} tok/s\n")
 
     events = prof.key_averages()
+    labels = ("attention", "mlp")
     if args.device.startswith("cuda"):
-        def dev_time(e):
-            return getattr(e, "self_device_time_total", getattr(e, "self_cuda_time_total", 0))
-        gpu_us = sum(dev_time(e) for e in events)
-        wall_us = step_ms * 1000 * args.steps
-        kernels = sum(e.count for e in events if dev_time(e) > 0)
-        print(f"GPU busy {gpu_us / 1000 / args.steps:.1f} ms of {step_ms:.1f} ms per step "
-              f"({100 * gpu_us / wall_us:.0f}% utilization), ~{kernels / args.steps:.0f} kernel launches/step\n")
+        # Count only kernels and memcpys that ran on the GPU. Summing key_averages()
+        # double-counts: each aten op's row repeats its kernels' time, and the
+        # record_function labels get a GPU span that includes the idle gaps.
+        gpu = [e for e in prof.events()
+               if e.device_type == torch.autograd.DeviceType.CUDA and e.name not in labels]
+        intervals = sorted((e.time_range.start, e.time_range.end) for e in gpu)
+        gpu_us, end = 0.0, float("-inf")
+        for s, t in intervals:  # union, in case two streams overlap
+            if t > end:
+                gpu_us += t - max(s, end)
+                end = t
+        gpu_ms = gpu_us / 1000 / args.steps
+        print(f"GPU busy {gpu_ms:.1f} ms of {step_ms:.1f} ms per step "
+              f"({100 * gpu_ms / step_ms:.0f}% utilization), ~{len(gpu) / args.steps:.0f} kernel launches/step\n")
         sort_by = "self_cuda_time_total"
     else:
         sort_by = "self_cpu_time_total"
 
-    for label in ("attention", "mlp"):
+    # Profiling slows the CPU side down, so report each label as a share of the
+    # profiled CPU time rather than in ms.
+    profiled_cpu_us = sum(e.self_cpu_time_total for e in events)
+    for label in labels:
         ev = next((e for e in events if e.key == label), None)
         if ev:
-            print(f"{label:>10}: {ev.cpu_time_total / 1000 / args.steps:.1f} ms/step (CPU time incl. children)")
+            print(f"{label:>10}: {100 * ev.cpu_time_total / profiled_cpu_us:.0f}% of CPU time (incl. children)")
     print()
     print(events.table(sort_by=sort_by, row_limit=15))
     if args.trace:

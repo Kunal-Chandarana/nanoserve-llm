@@ -1,0 +1,81 @@
+name, memory.total [MiB], driver_version
+NVIDIA GeForce RTX 4090, 24564 MiB, 595.91.07
+model=Qwen/Qwen2.5-0.5B-Instruct levels=1,4,16,64 input=512 output=128 dtype=bfloat16
+== vLLM
+  waiting for server on :8000 ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      3.40     435.1      30.6      38.8     2.08     2.14     4.98      305.0
+conc=4           64/64     13.04    1669.5      42.5      66.8     2.05     2.18     4.36      343.2
+conc=16          64/64     43.11    5517.8      90.1     114.1     2.21     2.59    12.03      381.1
+conc=64         256/256    91.84   11755.2     223.1     403.1     3.69     4.57    18.58      748.6
+
+Saved results to benchmarks/results/gpu/vllm-20261101-224233.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/vllm-20261101-224233.json
+== nanoserve
+  waiting for server on :8000 ...
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      0.25      32.3      38.6      69.6    30.89    31.68    92.10     4069.7
+conc=4           64/64      0.49      62.7     101.2     165.3    63.19    65.48   189.12     8415.0
+conc=16          64/64      0.65      82.6     340.5     753.9   191.08   198.08   586.82    25762.9
+conc=64         256/256     0.67      86.3    1434.9    6937.5   734.34   741.05  2169.65    99427.2
+
+Saved results to benchmarks/results/gpu/nanoserve-20261101-225718.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/nanoserve-20261101-225718.json
+== Profiling a nanoserve decode step
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 1325.57it/s]
+USDT:2026-11-01 22:57:32 4793:4793 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-11-01 22:57:36 4793:4793 SyncActivityProfilerHandler.cpp:59] profiler_stop
+
+Decode step: batch 16, context ~512 tokens, 190.7 ms/step = 84 tok/s
+
+GPU busy 369.7 ms of 190.7 ms per step (194% utilization), ~22717 kernel launches/step
+
+ attention: 309.9 ms/step (CPU time incl. children)
+       mlp: 10.2 ms/step (CPU time incl. children)
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                              attention         0.00%       0.000us         0.00%       0.000us       0.000us        3.082s      1173.14%        3.082s      12.843ms           240  
+                                            aten::copy_         5.98%     207.471ms        16.03%     556.016ms      15.011us     117.946ms        44.89%     117.953ms       3.184us         37040  
+                                                    mlp         0.00%       0.000us         0.00%       0.000us       0.000us      88.725ms        33.77%      88.725ms     369.686us           240  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us      55.741ms        21.21%      55.741ms       5.574ms            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us      31.629ms        12.04%      31.629ms       2.437us         12980  
+                                              aten::bmm         8.38%     290.548ms        10.24%     354.995ms      46.223us      22.412ms         8.53%      22.426ms       2.920us          7680  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      15.949ms         6.07%      15.949ms       2.077us          7680  
+                                              aten::mul         3.24%     112.320ms         4.91%     170.175ms      17.259us      14.564ms         5.54%      14.567ms       1.477us          9860  
+                                            aten::fill_         2.12%      73.379ms         4.89%     169.394ms      11.028us      14.508ms         5.52%      14.511ms       0.945us         15360  
+                                               aten::mm         0.59%      20.599ms         0.85%      29.304ms      30.210us      13.522ms         5.15%      13.522ms      13.940us           970  
+                                            aten::where         2.50%      86.699ms         8.94%     309.958ms      26.906us      13.198ms         5.02%      24.157ms       2.097us         11520  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us      13.118ms         4.99%      13.118ms       3.416us          3840  
+                                             aten::add_         0.97%      33.758ms         1.69%      58.437ms      15.218us      12.104ms         4.61%      12.107ms       3.153us          3840  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      12.104ms         4.61%      12.104ms       3.152us          3840  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.726ms         4.46%      11.726ms       9.772us          1200  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 3.468s
+Self CUDA time total: 262.750ms
+
+Trace written to benchmarks/results/gpu/nanoserve_decode_trace.json
+== Results
+Saved plot to benchmarks/results/gpu/vllm_vs_nanoserve.png
+  load |         output tok/s         |         TTFT p50 ms          |         TPOT p50 ms         
+       |      vllm nanoserve    ratio |      vllm nanoserve    ratio |      vllm nanoserve    ratio
+---------------------------------------------------------------------------------------------------
+     1 |       435        32    0.07x |        31        39    1.26x |       2.1      30.9   14.82x
+     4 |      1669        63    0.04x |        43       101    2.38x |       2.0      63.2   30.87x
+    16 |      5518        83    0.01x |        90       340    3.78x |       2.2     191.1   86.60x
+    64 |     11755        86    0.01x |       223      1435    6.43x |       3.7     734.3  199.02x
+
+ratio = nanoserve / vllm. For tok/s higher is better; for latency lower is better.
+
+Done. Everything is in benchmarks/results/gpu/ -- copy it back and commit it.
+BENCH_EXIT=0
