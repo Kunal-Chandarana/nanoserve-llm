@@ -1,0 +1,30 @@
+
+Decode step: batch 16, context ~512 tokens, 192.3 ms/step = 83 tok/s
+
+GPU busy 26.5 ms of 192.3 ms per step (14% utilization), ~11153 kernel launches/step
+
+ attention: 89% of CPU time (incl. children)
+       mlp: 3% of CPU time (incl. children)
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                              attention         0.00%       0.000us         0.00%       0.000us       0.000us        3.115s      1174.19%        3.115s      12.980ms           240  
+                                            aten::copy_         5.95%     209.126ms        16.13%     566.423ms      15.292us     120.562ms        45.44%     120.570ms       3.255us         37040  
+                                                    mlp         0.00%       0.000us         0.00%       0.000us       0.000us      89.554ms        33.75%      89.554ms     373.140us           240  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us      58.479ms        22.04%      58.479ms       5.848ms            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us      31.535ms        11.89%      31.535ms       2.430us         12980  
+                                              aten::bmm         8.43%     295.919ms        10.26%     360.438ms      46.932us      22.367ms         8.43%      22.378ms       2.914us          7680  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      15.920ms         6.00%      15.920ms       2.073us          7680  
+                                              aten::mul         3.26%     114.325ms         4.93%     173.010ms      17.547us      14.557ms         5.49%      14.559ms       1.477us          9860  
+                                            aten::fill_         2.09%      73.345ms         4.94%     173.467ms      11.293us      14.505ms         5.47%      14.508ms       0.945us         15360  
+                                               aten::mm         0.60%      21.103ms         0.85%      29.757ms      30.678us      13.515ms         5.09%      13.515ms      13.933us           970  
+                                            aten::where         2.52%      88.364ms         8.88%     312.001ms      27.083us      13.197ms         4.97%      24.154ms       2.097us         11520  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us      13.085ms         4.93%      13.085ms       3.407us          3840  
+                                             aten::add_         0.98%      34.348ms         1.70%      59.837ms      15.583us      12.108ms         4.56%      12.108ms       3.153us          3840  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      12.108ms         4.56%      12.108ms       3.153us          3840  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.722ms         4.42%      11.722ms       9.769us          1200  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 3.512s
+Self CUDA time total: 265.311ms
+

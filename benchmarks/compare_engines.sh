@@ -15,6 +15,8 @@
 #   LEVELS       concurrency levels        (default 1,4,16,64)
 #   INPUT_LEN    prompt tokens             (default 512)
 #   OUTPUT_LEN   generated tokens          (default 128)
+#   VENV         where vLLM gets installed (default ~/vllm-venv)
+#   SKIP_INSTALL=1  use $PYTHON as is (e.g. PYTHON=~/vllm-venv/bin/python on a rerun)
 #   SKIP_VLLM=1  only run nanoserve (also how to dry-run this script on a Mac:
 #                SKIP_VLLM=1 SKIP_INSTALL=1 DEVICE=cpu DTYPE=float32 LEVELS=1,2 OUTPUT_LEN=8 INPUT_LEN=32)
 set -euo pipefail
@@ -29,6 +31,7 @@ DEVICE=${DEVICE:-cuda}
 DTYPE=${DTYPE:-bfloat16}
 KV_CACHE_GB=${KV_CACHE_GB:-8}
 PYTHON=${PYTHON:-python3}
+VENV=${VENV:-$HOME/vllm-venv}
 OUT=benchmarks/results/gpu
 PORT=8000
 
@@ -64,8 +67,17 @@ run_benchmark() {
 }
 
 if [[ "${SKIP_INSTALL:-0}" != 1 ]]; then
-  echo "== Installing vLLM and benchmark dependencies"
-  $PYTHON -m pip install -q vllm aiohttp matplotlib
+  # Into a fresh venv with uv: plain pip on a PyTorch image can backtrack for
+  # half an hour trying to fit vLLM around the preinstalled torch, and Debian's
+  # system Python refuses pip installs outright (PEP 668).
+  echo "== Installing vLLM and benchmark dependencies into $VENV"
+  $PYTHON -m pip install -q --break-system-packages uv || $PYTHON -m pip install -q uv
+  $PYTHON -m uv venv -q "$VENV"
+  $PYTHON -m uv pip install -q --python "$VENV/bin/python" vllm aiohttp matplotlib
+  # Prebuilt FlashInfer kernels. Without them vLLM compiles its sampler at
+  # startup, which fails on images with no nvcc.
+  "$VENV/bin/vllm" download-kernels
+  PYTHON="$VENV/bin/python"
 fi
 
 if [[ "$DEVICE" == cuda* ]]; then
