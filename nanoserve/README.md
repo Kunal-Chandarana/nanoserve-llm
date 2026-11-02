@@ -12,6 +12,7 @@ implementation.
 | 4 | OpenAI-compatible streaming server, measured with [`benchmarks/`](../benchmarks/README.md) | ✅ |
 | 5 | Head-to-head with `vllm serve` on the same GPU, with a write-up of the gap | ✅ |
 | 6 | Batched paged attention: one gather + one SDPA call per layer for the whole batch | ✅ |
+| 7 | CUDA graphs for decode steps | ✅ |
 
 ## Design
 
@@ -306,6 +307,74 @@ GPU work itself shrank 4.6×, since the per-sequence gathers and
 step: ~1,470 launches, each issued from Python, cost far more than the 5.7 ms
 of math they trigger. That's exactly what **CUDA graphs** remove (fix #2): capture
 the decode step once per batch size and replay it with a single launch.
+
+## CUDA graphs (step 7)
+
+`cuda_graphs.py` records a decode step's ~1,450 kernels once and replays them
+with one launch. A graph replays fixed shapes at fixed memory addresses, so,
+as in vLLM:
+
+- **Only pure-decode steps are graphed** (every sequence adds one token).
+  Prefill steps run eagerly; their big matmuls keep the GPU busy anyway.
+- **Shapes are bucketed.** The batch is padded up to 1, 2, 4, 8, 16, 24, ...
+  (vLLM's capture sizes) and the block table up to a power of two, up to
+  4,096 tokens of context. Longer contexts fall back to eager. Every graph is
+  captured at startup, largest first, into one shared memory pool.
+- **One host-to-device copy per step.** Token ids, positions, KV slots,
+  context lengths and block tables are packed into one static buffer per
+  graph; the attention mask is computed inside the graph.
+- **Padded rows are harmless.** They write K/V to a scratch block the
+  allocator never hands out, and attend to a single key, so they never
+  produce NaNs. Their outputs are dropped.
+- On by default on CUDA; `--enforce-eager` turns it off, as in vLLM.
+
+**A bug worth knowing about.** The first GPU run hit a device-side "index out
+of bounds" assert on the *second* replay. The mask, key-position and
+row-index tensors a graph reads were referenced only by the warmup closure,
+which got dropped after capture. Python freed them, the caching allocator gave
+their memory to the next eager op (a prefill step), and the graph kept
+reading the old addresses. **Anything a captured graph reads must stay alive
+as long as the graph does.** The CPU tests couldn't see it (nothing is
+captured there); `test_captured_graphs_match_eager_on_cuda` does, because it
+runs eager steps after capture.
+
+### Results: RTX 4090
+
+Decode step, `profile_step.py`, ~512-token context
+([`gpu-step7/profile_*.txt`](../benchmarks/results/gpu-step7/)):
+
+| Batch | Eager | CUDA graphs | Speedup | GPU busy, eager → graphs |
+|---|---|---|---|---|
+| 1 | 24.3 ms | 4.6 ms | 5.3× | 17% → 95% |
+| 16 | 26.8 ms | 9.3 ms | 2.9× | 19% → 68% |
+| 64 | 61.0 ms | 41.9 ms | 1.5× | 45% → 64% |
+
+Serving benchmark, same workload as steps 5 and 6. vLLM ran 5–12% faster on
+this pod than on the earlier ones, so the gap is against this run's vLLM. Data
+in [`benchmarks/results/gpu-step7/`](../benchmarks/results/gpu-step7/).
+
+![vLLM vs nanoserve, steps 5, 6 and 7](../benchmarks/results/gpu-step7/steps_5_6_7.png)
+
+| Concurrency | nanoserve step 6 | nanoserve step 7 | Gain | vLLM | Gap to vLLM, step 5 → 6 → 7 |
+|---|---|---|---|---|---|
+| 1 | 35 tok/s | 215 | 6.1× | 454 | 13× → 12× → **2.1×** |
+| 4 | 131 | 622 | 4.7× | 1,782 | 27× → 12× → **2.9×** |
+| 16 | 430 | 1,471 | 3.4× | 5,811 | 67× → 12× → **4.0×** |
+| 64 | 702 | 1,249 | 1.8× | 13,178 | 136× → 16× → **10.6×** |
+
+- **At low concurrency nanoserve is now close to vLLM.** TPOT at concurrency 1
+  is 4.4 ms vs vLLM's 2.1 ms (it was 28 ms). At batch 1 the GPU is busy 95% of
+  the step, so what's left is the work itself, not overhead.
+- **At concurrency 64 the bottleneck has moved to the GPU.** Throughput is
+  lower at 64 than at 16, and a batch-64 step spends 27 ms of real GPU time.
+  Most of it is the padded gather: every layer copies each sequence's KV
+  blocks, padded to a power-of-two bucket, into one dense tensor before SDPA.
+  vLLM's kernel reads K/V straight from the blocks, with no copy.
+
+**Next:** a real paged-attention kernel (for example a Triton kernel, or
+FlashAttention's / FlashInfer's paged APIs) that reads K/V from the block
+table in place. That's what's left between nanoserve and vLLM at high
+concurrency.
 
 ## Usage
 

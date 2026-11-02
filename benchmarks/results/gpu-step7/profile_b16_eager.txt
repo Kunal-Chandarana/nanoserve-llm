@@ -1,0 +1,30 @@
+
+Decode step (eager): batch 16, context ~512 tokens, 26.8 ms/step = 597 tok/s
+
+GPU busy 5.2 ms of 26.8 ms per step (19% utilization), ~1469 kernel launches/step
+
+ attention: 28% of CPU time (incl. children)
+       mlp: 24% of CPU time (incl. children)
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                              attention         0.00%       0.000us         0.00%       0.000us       0.000us      92.381ms       178.30%      92.381ms     384.922us           240  
+                                                    mlp         0.00%       0.000us         0.00%       0.000us       0.000us      79.621ms       153.67%      79.621ms     331.755us           240  
+                                               aten::mm         5.20%      19.732ms         7.27%      27.597ms      28.450us      13.563ms        26.18%      13.563ms      13.982us           970  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.817ms        22.81%      11.817ms       9.847us          1200  
+                                            aten::copy_         3.91%      14.850ms        10.66%      40.477ms      14.560us       9.785ms        18.89%       9.786ms       3.520us          2780  
+                     aten::_efficient_attention_forward         0.59%       2.225ms         1.57%       5.944ms      24.768us       6.699ms        12.93%       6.699ms      27.914us           240  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us       6.699ms        12.93%       6.699ms      27.914us           240  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us       6.183ms        11.93%       6.183ms      12.618us           490  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us       5.149ms         9.94%       5.149ms     514.875us            10  
+                                            aten::addmm         3.64%      13.832ms         4.91%      18.628ms      25.873us       4.793ms         9.25%       4.793ms       6.657us           720  
+                                              aten::mul         4.18%      15.868ms         6.91%      26.231ms      12.033us       3.425ms         6.61%       3.425ms       1.571us          2180  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       3.056ms         5.90%       3.056ms       2.093us          1460  
+                                            aten::index         5.00%      18.981ms         8.61%      32.663ms      22.526us       3.006ms         5.80%       3.010ms       2.076us          1450  
+void at::native::vectorized_gather_kernel<16, long>(...         0.00%       0.000us         0.00%       0.000us       0.000us       3.006ms         5.80%       3.006ms       2.073us          1450  
+                                 aten::_index_put_impl_         2.19%       8.296ms         4.30%      16.312ms      16.991us       2.781ms         5.37%       2.781ms       2.897us           960  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 379.544ms
+Self CUDA time total: 51.811ms
+

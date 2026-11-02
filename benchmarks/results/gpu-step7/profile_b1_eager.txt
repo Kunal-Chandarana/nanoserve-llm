@@ -1,0 +1,30 @@
+
+Decode step (eager): batch 1, context ~512 tokens, 24.3 ms/step = 41 tok/s
+
+GPU busy 4.1 ms of 24.3 ms per step (17% utilization), ~1445 kernel launches/step
+
+ attention: 31% of CPU time (incl. children)
+       mlp: 26% of CPU time (incl. children)
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                              attention         0.00%       0.000us         0.00%       0.000us       0.000us      94.737ms       230.43%      94.737ms     394.737us           240  
+                                                    mlp         0.00%       0.000us         0.00%       0.000us       0.000us      77.676ms       188.93%      77.676ms     323.652us           240  
+                                               aten::mm         5.02%      17.609ms         7.01%      24.586ms      25.347us      12.246ms        29.79%      12.246ms      12.625us           970  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us      11.331ms        27.56%      11.331ms      15.522us           730  
+                     aten::_efficient_attention_forward         0.64%       2.231ms         1.79%       6.273ms      26.136us       6.701ms        16.30%       6.701ms      27.920us           240  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us       6.701ms        16.30%       6.701ms      27.920us           240  
+                                            aten::copy_         4.35%      15.245ms        10.27%      36.040ms      12.964us       4.554ms        11.08%       4.554ms       1.638us          2780  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us       3.234ms         7.86%       3.234ms       3.368us           960  
+                                            aten::index         5.34%      18.727ms         9.30%      32.626ms      22.500us       2.995ms         7.28%       2.995ms       2.065us          1450  
+                                              aten::mul         4.59%      16.088ms         7.67%      26.917ms      12.347us       2.919ms         7.10%       2.920ms       1.339us          2180  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       2.673ms         6.50%       2.673ms       1.831us          1460  
+                                 aten::_index_put_impl_         2.44%       8.576ms         4.64%      16.285ms      16.963us       2.325ms         5.66%       2.325ms       2.422us           960  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       2.325ms         5.66%       2.325ms       2.422us           960  
+                                            aten::addmm         3.48%      12.192ms         4.87%      17.078ms      23.719us       2.318ms         5.64%       2.318ms       3.219us           720  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       2.057ms         5.00%       2.057ms       1.418us          1450  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 350.786ms
+Self CUDA time total: 41.113ms
+
