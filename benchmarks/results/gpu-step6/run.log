@@ -1,0 +1,129 @@
+== Installing vLLM and benchmark dependencies into /root/vllm-venv
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+FlashInfer kernels are disabled: flashinfer-cubin is not installed and nvcc (CUDA_HOME, CUDA_PATH, PATH or /usr/local/cuda) or ninja (PATH) is missing. Set CUDA_HOME to a CUDA toolkit and put ninja on PATH, or run `vllm download-kernels`.
+=== Cubin Wheel Install ===
+FlashInfer version: 0.7.0.post1
+Wheel index: https://flashinfer.ai/whl
+Requirement: flashinfer-cubin==0.7.0.post1
+Command: /usr/local/bin/uv pip install --python /root/vllm-venv/bin/python --upgrade --no-deps --index-url https://flashinfer.ai/whl flashinfer-cubin==0.7.0.post1
+Using Python 3.12.3 environment at: /root/vllm-venv
+Resolved 1 package in 346ms
+Downloading flashinfer-cubin (1.5GiB)
+ Downloaded flashinfer-cubin
+Prepared 1 package in 52.26s
+Installed 1 package in 16.02s
+ + flashinfer-cubin==0.7.0.post1
+✅ flashinfer-cubin installed successfully.
+=== JIT Cache Wheel Install ===
+FlashInfer version: 0.7.0.post1
+CUDA version: 13.0
+Wheel CUDA label: cu130
+Install mode: all
+Wheel index: https://flashinfer.ai/whl/cu130
+Requirement: flashinfer-jit-cache==0.7.0.post1+cu130
+Command: /usr/local/bin/uv pip install --python /root/vllm-venv/bin/python --upgrade --index-url https://flashinfer.ai/whl/cu130 flashinfer-jit-cache==0.7.0.post1+cu130
+Using Python 3.12.3 environment at: /root/vllm-venv
+Resolved 7 packages in 19.90s
+Downloading flashinfer-jit-cache-sm90a (280.5MiB)
+Downloading flashinfer-jit-cache-sm103a (266.7MiB)
+Downloading flashinfer-jit-cache-sm100a (260.7MiB)
+Downloading flashinfer-jit-cache-sm80 (110.5MiB)
+Downloading flashinfer-jit-cache-sm120f (178.5MiB)
+Downloading flashinfer-jit-cache-sm89 (108.6MiB)
+ Downloaded flashinfer-jit-cache-sm89
+ Downloaded flashinfer-jit-cache-sm80
+ Downloaded flashinfer-jit-cache-sm120f
+ Downloaded flashinfer-jit-cache-sm100a
+ Downloaded flashinfer-jit-cache-sm103a
+ Downloaded flashinfer-jit-cache-sm90a
+Prepared 7 packages in 16.09s
+Installed 7 packages in 1.11s
+ + flashinfer-jit-cache==0.7.0.post1+cu130
+ + flashinfer-jit-cache-sm100a==0.7.0.post1+cu130
+ + flashinfer-jit-cache-sm103a==0.7.0.post1+cu130
+ + flashinfer-jit-cache-sm120f==0.7.0.post1+cu130
+ + flashinfer-jit-cache-sm80==0.7.0.post1+cu130
+ + flashinfer-jit-cache-sm89==0.7.0.post1+cu130
+ + flashinfer-jit-cache-sm90a==0.7.0.post1+cu130
+✅ flashinfer-jit-cache installed successfully.
+name, memory.total [MiB], driver_version
+NVIDIA GeForce RTX 4090, 24564 MiB, 595.91.07
+model=Qwen/Qwen2.5-0.5B-Instruct levels=1,4,16,64 input=512 output=128 dtype=bfloat16
+== vLLM
+  waiting for server on :8000 ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      3.32     425.0      26.7      37.9     2.13     2.43     6.72      338.6
+conc=4           64/64     12.66    1621.1      46.6      68.7     2.08     2.23     5.90      338.5
+conc=16          64/64     40.71    5210.8      98.8     123.9     2.28     2.62     9.07      404.4
+conc=64         256/256    89.53   11460.3     233.1     389.4     3.75     4.73    19.60      789.8
+
+Saved results to benchmarks/results/gpu/vllm-20261102-044210.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/vllm-20261102-044210.json
+== nanoserve
+  waiting for server on :8000 ...
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      0.28      35.4      40.7      69.6    28.03    30.38    83.50     3899.1
+conc=4           64/64      1.02     130.6      72.2     103.0    30.23    31.71    88.20     4107.2
+conc=16          64/64      3.36     430.0      98.5     247.1    36.06    38.32   105.22     5000.3
+conc=64         256/256     5.48     701.6     214.5    1211.6    88.11    94.05   257.37    13156.8
+
+Saved results to benchmarks/results/gpu/nanoserve-20261102-044839.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/nanoserve-20261102-044839.json
+== Profiling a nanoserve decode step
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 952.54it/s]
+USDT:2026-11-02 04:48:56 2062:2062 SyncActivityProfilerHandler.cpp:52] profiler_start
+USDT:2026-11-02 04:48:57 2062:2062 SyncActivityProfilerHandler.cpp:59] profiler_stop
+
+Decode step: batch 16, context ~512 tokens, 33.5 ms/step = 478 tok/s
+
+GPU busy 5.7 ms of 33.5 ms per step (17% utilization), ~1469 kernel launches/step
+
+ attention: 28% of CPU time (incl. children)
+       mlp: 23% of CPU time (incl. children)
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                              attention         0.00%       0.000us         0.00%       0.000us       0.000us     120.148ms       211.49%     120.148ms     500.616us           240  
+                                                    mlp         0.00%       0.000us         0.00%       0.000us       0.000us      96.642ms       170.12%      96.642ms     402.673us           240  
+                                            aten::copy_         3.72%      18.179ms        11.08%      54.192ms      19.493us      15.386ms        27.08%      15.388ms       5.535us          2780  
+                                               aten::mm         4.69%      22.924ms         6.66%      32.594ms      33.603us      13.214ms        23.26%      13.214ms      13.623us           970  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.491ms        20.23%      11.491ms       9.576us          1200  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us      10.756ms        18.93%      10.756ms       1.076ms            10  
+                     aten::_efficient_attention_forward         0.68%       3.340ms         1.82%       8.921ms      37.172us       6.711ms        11.81%       6.711ms      27.962us           240  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us       6.711ms        11.81%       6.711ms      27.962us           240  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us       6.041ms        10.63%       6.041ms      12.329us           490  
+                                            aten::addmm         3.47%      16.985ms         4.70%      22.972ms      31.906us       4.673ms         8.23%       4.673ms       6.490us           720  
+                                              aten::mul         4.33%      21.167ms         7.26%      35.538ms      16.302us       3.412ms         6.01%       3.412ms       1.565us          2180  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       3.048ms         5.37%       3.048ms       2.088us          1460  
+                                            aten::index         4.87%      23.841ms         8.38%      40.998ms      28.274us       2.970ms         5.23%       2.975ms       2.052us          1450  
+void at::native::vectorized_gather_kernel<16, long>(...         0.00%       0.000us         0.00%       0.000us       0.000us       2.970ms         5.23%       2.970ms       2.048us          1450  
+                                 aten::_index_put_impl_         2.05%      10.015ms         4.05%      19.826ms      20.652us       2.772ms         4.88%       2.772ms       2.887us           960  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 489.219ms
+Self CUDA time total: 56.809ms
+
+Trace written to benchmarks/results/gpu/nanoserve_decode_trace.json
+== Results
+Saved plot to benchmarks/results/gpu/vllm_vs_nanoserve.png
+  load |         output tok/s         |         TTFT p50 ms          |         TPOT p50 ms         
+       |      vllm nanoserve    ratio |      vllm nanoserve    ratio |      vllm nanoserve    ratio
+---------------------------------------------------------------------------------------------------
+     1 |       425        35    0.08x |        27        41    1.52x |       2.1      28.0   13.14x
+     4 |      1621       131    0.08x |        47        72    1.55x |       2.1      30.2   14.55x
+    16 |      5211       430    0.08x |        99        99    1.00x |       2.3      36.1   15.79x
+    64 |     11460       702    0.06x |       233       215    0.92x |       3.7      88.1   23.52x
+
+ratio = nanoserve / vllm. For tok/s higher is better; for latency lower is better.
+
+Done. Everything is in benchmarks/results/gpu/ -- copy it back and commit it.
+BENCH_EXIT=0
