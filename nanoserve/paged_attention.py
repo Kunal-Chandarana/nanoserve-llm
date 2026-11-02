@@ -21,9 +21,12 @@ tokens: a whole prompt for a new sequence (prefill) or one token for a running
 one (decode). Tokens arrive flattened, in the order the sequences were passed
 to begin_step.
 
-Attention here gathers each sequence's blocks into a contiguous tensor and
-calls SDPA, one sequence at a time. That is correct but slow; vLLM's CUDA
-kernel reads K/V straight out of the scattered blocks instead of copying them.
+Attention is batched: begin_step builds a padded block table and mask for the
+whole step, once, and every layer then does one gather and one SDPA call for
+all sequences. Decodes (1 new token) and prefills go in separate calls, so a
+decode is never padded out to the length of a prompt chunk. vLLM's CUDA
+kernel goes further and reads K/V straight out of the scattered blocks
+instead of gathering them into a padded tensor first.
 """
 
 from dataclasses import dataclass, field
@@ -72,6 +75,23 @@ class SequenceState:
     num_tokens: int = 0  # tokens whose K/V are in the cache
 
 
+@dataclass
+class AttentionBatch:
+    """Sequences attended in one padded SDPA call, shared by every layer.
+
+    token_idx: rows of the step's flat q/k/v that belong to this batch.
+    padded_idx: where each of those rows sits in the padded [B * max_new] layout.
+    block_tables: [B, max_blocks], padded with block 0 (masked out).
+    mask: [B, 1, max_new * group, max_blocks * block_size], already expanded
+      for GQA (see PagedKVCache.forward).
+    """
+    token_idx: torch.Tensor
+    padded_idx: torch.Tensor
+    block_tables: torch.Tensor
+    mask: torch.Tensor
+    max_new: int
+
+
 class PagedKVCache:
     def __init__(self, config: ModelConfig, num_blocks: int, block_size: int,
                  dtype: torch.dtype, device: str):
@@ -85,6 +105,7 @@ class PagedKVCache:
         self.seqs: Dict[int, SequenceState] = {}
         self._step: List[Tuple[int, int]] = []  # (seq_id, num_new_tokens)
         self._slot_mapping = None
+        self._batches: List[AttentionBatch] = []
 
     # ---- sequence lifecycle -------------------------------------------------
 
@@ -128,13 +149,49 @@ class PagedKVCache:
                 positions.append(pos)
         self._step = list(step)
         self._slot_mapping = torch.tensor(slots, dtype=torch.long, device=self.device)
+        self._batches = self._build_batches(step)
         return torch.tensor(positions, dtype=torch.long, device=self.device)
+
+    def _build_batches(self, step: Sequence[Tuple[int, int]]) -> List[AttentionBatch]:
+        starts, offset = [], 0
+        for _, n in step:
+            starts.append(offset)
+            offset += n
+        decodes = [i for i, (_, n) in enumerate(step) if n == 1]
+        prefills = [i for i, (_, n) in enumerate(step) if n > 1]
+        return [self._build_batch([step[i] for i in group], [starts[i] for i in group])
+                for group in (decodes, prefills) if group]
+
+    def _build_batch(self, step: Sequence[Tuple[int, int]], starts: Sequence[int]) -> AttentionBatch:
+        max_new = max(n for _, n in step)
+        max_blocks = max(len(self.seqs[s].block_table) for s, _ in step)
+        token_idx, padded_idx, tables, cached, context = [], [], [], [], []
+        for row, ((seq_id, n), start) in enumerate(zip(step, starts)):
+            seq = self.seqs[seq_id]
+            token_idx.extend(range(start, start + n))
+            padded_idx.extend(range(row * max_new, row * max_new + n))
+            tables.append(seq.block_table + [0] * (max_blocks - len(seq.block_table)))
+            cached.append(seq.num_tokens)
+            context.append(seq.num_tokens + n)
+
+        as_tensor = lambda x: torch.tensor(x, dtype=torch.long, device=self.device)
+        cached, context = as_tensor(cached), as_tensor(context)
+        key_pos = torch.arange(max_blocks * self.block_size, device=self.device)
+        query_pos = cached[:, None] + torch.arange(max_new, device=self.device)  # [B, max_new]
+        # New token i of a sequence sits at position cached + i and may see keys
+        # up to there. Keys past the context are padding. A padded query row
+        # (i >= n) can still see key 0, so it never softmaxes over nothing; its
+        # output is dropped anyway.
+        mask = (key_pos <= query_pos[..., None]) & (key_pos < context[:, None, None])
+        mask = mask.repeat_interleave(self.num_queries_per_kv, dim=1)[:, None]
+        return AttentionBatch(as_tensor(token_idx), as_tensor(padded_idx), as_tensor(tables), mask, max_new)
 
     def end_step(self):
         for seq_id, n in self._step:
             self.seqs[seq_id].num_tokens += n
         self._step = []
         self._slot_mapping = None
+        self._batches = []
 
     def forward(self, layer_idx: int, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         k_cache, v_cache = self.k[layer_idx], self.v[layer_idx]
@@ -144,24 +201,25 @@ class PagedKVCache:
         v_cache.view(-1, *v_cache.shape[2:])[self._slot_mapping] = v
 
         out = torch.empty_like(q)
-        start = 0
-        for seq_id, n in self._step:
-            seq = self.seqs[seq_id]
-            context_len = seq.num_tokens + n
-            blocks = torch.tensor(seq.block_table[:-(-context_len // self.block_size)], device=self.device)
-            keys = k_cache[blocks].flatten(0, 1)[:context_len]
-            values = v_cache[blocks].flatten(0, 1)[:context_len]
-            keys = keys.repeat_interleave(self.num_queries_per_kv, dim=1)
-            values = values.repeat_interleave(self.num_queries_per_kv, dim=1)
+        _, num_heads, head_dim = q.shape
+        num_kv_heads, group = k_cache.shape[2], self.num_queries_per_kv
+        for b in self._batches:
+            num_seqs = b.block_tables.shape[0]
+            # One gather for every sequence: [B, max_blocks * block_size, kv_heads, head_dim].
+            keys = k_cache[b.block_tables].flatten(1, 2).transpose(1, 2)
+            values = v_cache[b.block_tables].flatten(1, 2).transpose(1, 2)
 
-            # The n new tokens sit at the end of the context; new token i may
-            # see context positions 0 .. seq.num_tokens + i.
-            mask = torch.ones(n, context_len, dtype=torch.bool, device=q.device).tril(diagonal=seq.num_tokens)
-            q_seq = q[start:start + n]
-            out[start:start + n] = F.scaled_dot_product_attention(
-                q_seq.transpose(0, 1), keys.transpose(0, 1), values.transpose(0, 1),
-                attn_mask=mask).transpose(0, 1)
-            start += n
+            q_pad = q.new_zeros(num_seqs * b.max_new, num_heads, head_dim)
+            q_pad[b.padded_idx] = q[b.token_idx]
+            # GQA without copying K/V: query head h reads KV head h // group, so
+            # fold each KV head's group of query heads into the query-length
+            # dim: [B, max_new, kv_heads * group, d] -> [B, kv_heads, max_new * group, d].
+            q_pad = (q_pad.view(num_seqs, b.max_new, num_kv_heads, group, head_dim)
+                     .permute(0, 2, 1, 3, 4).reshape(num_seqs, num_kv_heads, b.max_new * group, head_dim))
+            o = F.scaled_dot_product_attention(q_pad, keys, values, attn_mask=b.mask)
+            o = (o.view(num_seqs, num_kv_heads, b.max_new, group, head_dim)
+                 .permute(0, 2, 1, 3, 4).reshape(num_seqs * b.max_new, num_heads, head_dim))
+            out[b.token_idx] = o[b.padded_idx]
         return out
 
     # ---- introspection ------------------------------------------------------
