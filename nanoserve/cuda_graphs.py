@@ -54,7 +54,18 @@ def block_buckets(max_blocks: int) -> List[int]:
 class _Graph:
     packed: torch.Tensor          # [batch, BLOCKS + num_blocks] int64, the only input
     hidden: torch.Tensor          # [batch, hidden_size], the output
-    run: Callable[[], None]       # replay (or, without capture, run eagerly)
+    # Holding forward also keeps alive every tensor it closes over (mask,
+    # key positions, row indices). A replay reads them at fixed addresses; if
+    # they were freed, the allocator would hand that memory to the next eager
+    # op and the graph would read garbage indices.
+    forward: Callable[[], None]
+    graph: Optional["torch.cuda.CUDAGraph"] = None
+
+    def run(self):
+        if self.graph is not None:
+            self.graph.replay()
+        else:
+            self.forward()
 
 
 class DecodeGraphRunner:
@@ -148,4 +159,4 @@ class DecodeGraphRunner:
         with torch.cuda.graph(graph, pool=self._pool):
             forward()
         self._pool = graph.pool()
-        return _Graph(packed, hidden, graph.replay)
+        return _Graph(packed, hidden, forward, graph)
