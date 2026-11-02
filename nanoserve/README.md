@@ -11,7 +11,7 @@ implementation.
 | 3 | Continuous-batching scheduler: mixed prefill + decode, preemption when blocks run out | ✅ |
 | 4 | OpenAI-compatible streaming server, measured with [`benchmarks/`](../benchmarks/README.md) | ✅ |
 | 5 | Head-to-head with `vllm serve` on the same GPU, with a write-up of the gap | ✅ |
-| 6 | Batched paged attention: one gather + one SDPA call per layer for the whole batch | ✅ on CPU; GPU not re-measured |
+| 6 | Batched paged attention: one gather + one SDPA call per layer for the whole batch | ✅ |
 
 ## Design
 
@@ -266,11 +266,46 @@ Decode step on an M-series CPU, fp32, ~256-token context (`profile_step.py`):
 | 64 | 347 ms (185 tok/s) | 112 ms (572 tok/s) | 3.1× | 78% → 23% |
 
 The work that grew with the batch is gone; what's left is mostly the MLP and
-per-op launch overhead. On the GPU the gain should be larger, since there the
-loop was ~630 kernel launches per sequence while the GPU sat 86% idle. That
-hasn't been re-measured; rerun `benchmarks/compare_engines.sh` to get it. The
-next fix on the list is CUDA graphs, for the launch overhead that's still
-there at batch 1.
+per-op launch overhead.
+
+### On the GPU (RTX 4090, same setup as step 5)
+
+Rerun of `benchmarks/compare_engines.sh` on the same card, driver and image.
+vLLM came in within 3% of its step 5 numbers, so the runs are comparable.
+Data in [`benchmarks/results/gpu-step6/`](../benchmarks/results/gpu-step6/).
+
+![vLLM vs nanoserve, step 5 vs step 6](../benchmarks/results/gpu-step6/step5_vs_step6.png)
+
+| Concurrency | nanoserve step 5 | nanoserve step 6 | Gain | vLLM | Gap to vLLM, step 5 → 6 |
+|---|---|---|---|---|---|
+| 1 | 32 tok/s | 35 tok/s | 1.1× | 425 | 13× → 12× |
+| 4 | 63 | 131 | 2.1× | 1,621 | 27× → 12× |
+| 16 | 83 | 430 | **5.2×** | 5,211 | 67× → 12× |
+| 64 | 86 | 702 | **8.1×** | 11,460 | 136× → 16× |
+
+- **nanoserve now scales with the batch.** TPOT stays at 28–36 ms from 1 to 16
+  concurrent requests (it was 31 → 191 ms), the same flat shape as vLLM's.
+- **The gap to vLLM is now roughly constant, ~12×**, instead of growing with
+  concurrency. Whatever is left costs the same per step regardless of batch
+  size, which points at fixed per-step overhead, not attention.
+- **TTFT at 16 and 64 is now on par with vLLM's** (99 vs 99 ms, 215 vs 233 ms).
+
+The decode profile at batch 16
+([`nanoserve_profile.txt`](../benchmarks/results/gpu-step6/nanoserve_profile.txt))
+shows where that fixed cost is:
+
+| | Step 5 | Step 6 |
+|---|---|---|
+| Step time | 192 ms | 33.5 ms |
+| GPU busy | 26.5 ms (14%) | 5.7 ms (17%) |
+| Kernel launches per step | ~11,150 | ~1,470 |
+| Attention share of CPU time | 89% | 28% |
+
+GPU work itself shrank 4.6×, since the per-sequence gathers and
+`repeat_interleave` copies are gone. But the GPU is still idle 83% of the
+step: ~1,470 launches, each issued from Python, cost far more than the 5.7 ms
+of math they trigger. That's exactly what **CUDA graphs** remove (fix #2): capture
+the decode step once per batch size and replay it with a single launch.
 
 ## Usage
 
