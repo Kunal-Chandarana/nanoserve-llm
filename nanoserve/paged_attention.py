@@ -30,7 +30,7 @@ instead of gathering them into a padded tensor first.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -95,7 +95,11 @@ class AttentionBatch:
 class PagedKVCache:
     def __init__(self, config: ModelConfig, num_blocks: int, block_size: int,
                  dtype: torch.dtype, device: str):
-        shape = (num_blocks, block_size, config.num_key_value_heads, config.head_dim)
+        # One extra physical block that the allocator never hands out. CUDA
+        # graphs pad their batch with dummy rows; those rows write their K/V
+        # here, so they can't touch a real sequence.
+        self.scratch_block = num_blocks
+        shape = (num_blocks + 1, block_size, config.num_key_value_heads, config.head_dim)
         self.k = [torch.zeros(shape, dtype=dtype, device=device) for _ in range(config.num_hidden_layers)]
         self.v = [torch.zeros(shape, dtype=dtype, device=device) for _ in range(config.num_hidden_layers)]
         self.block_size = block_size
@@ -135,22 +139,35 @@ class PagedKVCache:
         step: (seq_id, num_new_tokens) per sequence, in the same order as the
         tokens will be concatenated in input_ids.
         """
-        if not self.can_append(step):
-            raise OutOfBlocksError(f"need {sum(self.blocks_needed(s, n) for s, n in step)} blocks, "
-                                   f"{self.allocator.num_free} free")
+        self.reserve(step)
         positions, slots = [], []
         for seq_id, n in step:
             seq = self.seqs[seq_id]
-            for _ in range(self.blocks_needed(seq_id, n)):
-                seq.block_table.append(self.allocator.allocate())
             for pos in range(seq.num_tokens, seq.num_tokens + n):
                 block = seq.block_table[pos // self.block_size]
                 slots.append(block * self.block_size + pos % self.block_size)
                 positions.append(pos)
-        self._step = list(step)
         self._slot_mapping = torch.tensor(slots, dtype=torch.long, device=self.device)
         self._batches = self._build_batches(step)
         return torch.tensor(positions, dtype=torch.long, device=self.device)
+
+    def reserve(self, step: Sequence[Tuple[int, int]]):
+        """Allocate the blocks a step needs, without building its tensors.
+        begin_step does this first; the CUDA graph path does only this and
+        fills its own static buffers."""
+        if not self.can_append(step):
+            raise OutOfBlocksError(f"need {sum(self.blocks_needed(s, n) for s, n in step)} blocks, "
+                                   f"{self.allocator.num_free} free")
+        for seq_id, n in step:
+            seq = self.seqs[seq_id]
+            for _ in range(self.blocks_needed(seq_id, n)):
+                seq.block_table.append(self.allocator.allocate())
+        self._step = list(step)
+
+    def bind(self, slot_mapping: Optional[torch.Tensor], batches: List[AttentionBatch]):
+        """Point forward() at caller-owned tensors (the CUDA graph's static buffers)."""
+        self._slot_mapping = slot_mapping
+        self._batches = batches
 
     def _build_batches(self, step: Sequence[Tuple[int, int]]) -> List[AttentionBatch]:
         starts, offset = [], 0

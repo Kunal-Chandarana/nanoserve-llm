@@ -33,11 +33,13 @@ def main():
     parser.add_argument("--prompt-len", type=int, default=256)
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--trace", help="Write a Chrome trace (open in chrome://tracing or Perfetto)")
+    parser.add_argument("--enforce-eager", action="store_true", help="Don't use CUDA graphs for decode")
     args = parser.parse_args()
 
     model = load_model(args.model, getattr(torch, args.dtype), args.device)
     engine = LLMEngine(model, SchedulerConfig(max_num_seqs=args.batch, num_blocks=4096,
-                                              max_num_batched_tokens=args.batch * args.prompt_len))
+                                              max_num_batched_tokens=args.batch * args.prompt_len),
+                       cuda_graphs=False if args.enforce_eager else None)
     g = torch.Generator().manual_seed(0)
     for _ in range(args.batch):
         prompt = torch.randint(0, model.config.vocab_size, (args.prompt_len,), generator=g).tolist()
@@ -61,7 +63,8 @@ def main():
             engine.step()
         sync()
 
-    print(f"\nDecode step: batch {args.batch}, context ~{args.prompt_len} tokens, "
+    mode = "CUDA graphs" if engine.graphs and engine.graphs.capture else "eager"
+    print(f"\nDecode step ({mode}): batch {args.batch}, context ~{args.prompt_len} tokens, "
           f"{step_ms:.1f} ms/step = {1000 * args.batch / step_ms:.0f} tok/s\n")
 
     events = prof.key_averages()

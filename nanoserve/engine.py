@@ -32,6 +32,7 @@ from typing import Deque, Dict, List, Optional, Tuple
 
 import torch
 
+from .cuda_graphs import DecodeGraphRunner
 from .model import Qwen2Model
 from .paged_attention import PagedKVCache
 
@@ -165,7 +166,11 @@ class Scheduler:
 
 
 class LLMEngine:
-    def __init__(self, model: Qwen2Model, config: Optional[SchedulerConfig] = None):
+    def __init__(self, model: Qwen2Model, config: Optional[SchedulerConfig] = None,
+                 cuda_graphs: Optional[bool] = None):
+        """cuda_graphs: replay decode steps from CUDA graphs. Defaults to on for
+        CUDA, like vLLM without --enforce-eager. True on a CPU runs the same
+        static-buffer path eagerly, which is how the tests exercise it."""
         self.model = model
         self.config = config or SchedulerConfig()
         weight = model.embed_tokens.weight
@@ -173,6 +178,11 @@ class LLMEngine:
         self.cache = PagedKVCache(model.config, self.config.num_blocks, self.config.block_size,
                                   weight.dtype, weight.device)
         self.scheduler = Scheduler(self.config, self.cache)
+        if cuda_graphs is None:
+            cuda_graphs = self.device.type == "cuda"
+        self.graphs = DecodeGraphRunner(model, self.cache, self.config.max_num_seqs) if cuda_graphs else None
+        if self.graphs and self.graphs.capture:
+            self.graphs.capture_all()
         self.requests: Dict[int, Request] = {}
         self._ids = itertools.count()
         # Per-step batch composition, for analysis and tests. Bounded so a
@@ -214,8 +224,12 @@ class LLMEngine:
         input_ids = []
         for req, n in batch:
             input_ids.extend(req.all_token_ids[req.num_computed_tokens:req.num_computed_tokens + n])
-        positions = self.cache.begin_step([(req.request_id, n) for req, n in batch])
-        hidden = self.model(torch.tensor(input_ids, device=self.device), positions, self.cache)
+        step = [(req.request_id, n) for req, n in batch]
+        if self.graphs and self.graphs.supports(step):
+            hidden = self.graphs.run(step, input_ids)
+        else:
+            positions = self.cache.begin_step(step)
+            hidden = self.model(torch.tensor(input_ids, device=self.device), positions, self.cache)
         self.cache.end_step()
 
         # Which requests produce a token this step, and which hidden row each samples from.

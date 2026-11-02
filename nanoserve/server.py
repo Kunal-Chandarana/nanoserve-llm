@@ -352,6 +352,8 @@ def main():
     parser.add_argument("--block-size", type=int, default=16)
     parser.add_argument("--max-num-seqs", type=int, default=32)
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
+    parser.add_argument("--enforce-eager", action="store_true",
+                        help="Don't use CUDA graphs for decode (on by default on CUDA, as in vLLM)")
     args = parser.parse_args()
 
     dtype = getattr(torch, args.dtype)
@@ -366,7 +368,11 @@ def main():
     print(f"KV cache: {num_blocks} blocks x {args.block_size} tokens = {num_blocks * args.block_size:,} tokens "
           f"({args.kv_cache_gb} GB)")
 
-    worker = EngineWorker(LLMEngine(model, config))
+    start = time.perf_counter()
+    engine = LLMEngine(model, config, cuda_graphs=False if args.enforce_eager else None)
+    if engine.graphs and engine.graphs.capture:
+        print(f"Captured {len(engine.graphs.graphs)} decode CUDA graphs in {time.perf_counter() - start:.1f} s")
+    worker = EngineWorker(engine)
     worker.start()
     uvicorn.run(build_app(worker, tokenizer, args.model), host=args.host, port=args.port, log_level="warning")
 
