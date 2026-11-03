@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -417,7 +418,17 @@ def main():
                         help="Don't use CUDA graphs for decode (on by default on CUDA, as in vLLM)")
     parser.add_argument("--attention-backend", default="sdpa", choices=["sdpa", "triton"],
                         help="Decode attention: padded gather + SDPA, or the Triton paged kernel")
+    parser.add_argument("--gil-switch-interval-ms", type=float, default=0.5,
+                        help="Python's GIL switch interval (default in Python: 5 ms); see below")
     args = parser.parse_args()
+
+    # The engine thread and the HTTP thread share one GIL. When the engine
+    # thread releases it inside a blocking call, the HTTP thread can keep it
+    # for up to the switch interval, 5 ms by default, while the engine waits
+    # to launch the next step. Under torch 2.14 this cost ~6 ms per decode
+    # step at concurrency 64 (3,357 -> 4,523 tok/s with 0.5 ms). vLLM avoids
+    # the contention entirely by running the engine in its own process.
+    sys.setswitchinterval(args.gil_switch_interval_ms / 1000)
 
     dtype = getattr(torch, args.dtype)
     model_dir = download(args.model)
