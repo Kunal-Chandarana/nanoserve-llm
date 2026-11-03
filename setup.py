@@ -19,13 +19,13 @@ def read_requirements():
         return [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 
 setup(
-    name="vllm-learning",
+    name="nanoserve-llm",
     version="1.0.0",
-    author="vLLM Learning Project",
-    description="A comprehensive sample project to learn and experiment with vLLM",
+    author="Kunal Chandarana",
+    description="LLM inference engine built from scratch, benchmarked against vLLM",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/vLLMLearning",
+    url="https://github.com/Kunal-Chandarana/nanoserve-llm",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -69,9 +69,9 @@ setup(
         "": ["*.yaml", "*.yml", "*.json", "*.md", "*.txt"],
     },
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/vLLMLearning/issues",
-        "Source": "https://github.com/yourusername/vLLMLearning",
-        "Documentation": "https://github.com/yourusername/vLLMLearning/blob/main/README.md",
+        "Bug Reports": "https://github.com/Kunal-Chandarana/nanoserve-llm/issues",
+        "Source": "https://github.com/Kunal-Chandarana/nanoserve-llm",
+        "Documentation": "https://github.com/Kunal-Chandarana/nanoserve-llm/blob/main/README.md",
     },
 )
 

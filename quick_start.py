@@ -155,7 +155,7 @@ def main():
     
     # Check if we're in the right directory
     if not os.path.exists("README.md") or not os.path.exists("examples"):
-        print("❌ Please run this script from the vLLMLearning directory")
+        print("❌ Please run this script from the repository root")
         sys.exit(1)
     
     # Check installation

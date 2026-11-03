@@ -168,7 +168,7 @@ batch is large. That's why GPUs batch so well, and step 5 will show it.
 
 ```bash
 # On the GPU machine (any NVIDIA GPU with 16 GB+ and bf16: L4, A10G, A40, RTX 4090, A100...)
-git clone https://github.com/Kunal-Chandarana/vLLMLearning.git && cd vLLMLearning
+git clone https://github.com/Kunal-Chandarana/nanoserve-llm.git && cd nanoserve-llm
 bash benchmarks/compare_engines.sh          # ~20-30 min
 # copy benchmarks/results/gpu/ back, commit it
 ```

@@ -1,6 +1,6 @@
 # nanoserve: an LLM inference engine built from scratch, benchmarked against vLLM
 
-[![CI](https://github.com/Kunal-Chandarana/vLLMLearning/actions/workflows/ci.yml/badge.svg)](https://github.com/Kunal-Chandarana/vLLMLearning/actions/workflows/ci.yml)
+[![CI](https://github.com/Kunal-Chandarana/nanoserve-llm/actions/workflows/ci.yml/badge.svg)](https://github.com/Kunal-Chandarana/nanoserve-llm/actions/workflows/ci.yml)
 
 **nanoserve** is a small LLM serving engine written from scratch in PyTorch to
 understand how vLLM works inside. It has the same core design: a model that
@@ -106,7 +106,7 @@ The head-to-head with vLLM, on any NVIDIA GPU with 16 GB+ and bf16 support
 (about 30 minutes):
 
 ```bash
-git clone https://github.com/Kunal-Chandarana/vLLMLearning.git && cd vLLMLearning
+git clone https://github.com/Kunal-Chandarana/nanoserve-llm.git && cd nanoserve-llm
 bash benchmarks/compare_engines.sh   # results, plots and logs in benchmarks/results/gpu/
 ```
 
