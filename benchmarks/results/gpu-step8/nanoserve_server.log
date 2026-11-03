@@ -1,0 +1,11 @@
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 953.84it/s]
+KV cache: 43690 blocks x 16 tokens = 699,040 tokens (8.0 GB)
+Decode attention: sdpa
+Captured 88 decode CUDA graphs in 5.3 s
+/root/vLLMLearning/nanoserve/server.py:216: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")

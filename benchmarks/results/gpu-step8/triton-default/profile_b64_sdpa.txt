@@ -1,0 +1,28 @@
+
+Decode step (CUDA graphs, sdpa attention): batch 64, context ~512 tokens, 51.7 ms/step = 1237 tok/s
+
+GPU busy 32.4 ms of 51.7 ms per step (63% utilization), ~1601 kernel launches/step
+
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                            aten::copy_         0.13%     636.639us        68.45%     333.769ms       8.344ms     259.748ms        80.11%     259.748ms       6.494ms            40  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us     259.405ms        80.00%     259.405ms      25.941ms            10  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      14.634ms         4.51%      14.634ms      30.488us           480  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us      11.544ms         3.56%      11.544ms      48.101us           240  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us       9.637ms         2.97%       9.637ms      19.668us           490  
+ampere_bf16_s16816gemm_bf16_64x64_ldg8_f2f_stages_64...         0.00%       0.000us         0.00%       0.000us       0.000us       5.495ms         1.69%       5.495ms       7.632us           720  
+                                               aten::mm         0.17%     839.318us         0.20%     953.958us      95.396us       3.510ms         1.08%       3.510ms     351.008us            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       3.181ms         0.98%       3.181ms       2.179us          1460  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       2.581ms         0.80%       2.581ms       2.688us           960  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       1.998ms         0.62%       1.998ms       1.378us          1450  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.367ms         0.42%       1.367ms       2.847us           480  
+void cublasLt::splitKreduce_kernel<32, 16, int, __nv...         0.00%       0.000us         0.00%       0.000us       0.000us       1.356ms         0.42%       1.356ms       1.883us           720  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us       1.347ms         0.42%       1.347ms       2.806us           480  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.325ms         0.41%       1.325ms       2.703us           490  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     995.313us         0.31%     995.313us       1.026us           970  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 487.579ms
+Self CUDA time total: 324.257ms
+

@@ -1,0 +1,118 @@
+== install
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+== tests
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+tests/test_nanoserve_server.py::test_models_and_health
+  /root/vllm-venv/lib/python3.12/site-packages/fastapi/applications.py:4598: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+56 passed, 2 skipped, 2 warnings in 83.92s (0:01:23)
+== tests done
+== profile
+-- batch 1 sdpa
+Decode step (CUDA graphs, sdpa attention): batch 1, context ~512 tokens, 4.7 ms/step = 214 tok/s
+GPU busy 4.4 ms of 4.7 ms per step (94% utilization), ~1481 kernel launches/step
+-- batch 1 triton
+Decode step (CUDA graphs, triton attention): batch 1, context ~512 tokens, 5.4 ms/step = 185 tok/s
+GPU busy 5.1 ms of 5.4 ms per step (95% utilization), ~1217 kernel launches/step
+-- batch 16 sdpa
+Decode step (CUDA graphs, sdpa attention): batch 16, context ~512 tokens, 9.7 ms/step = 1652 tok/s
+GPU busy 6.7 ms of 9.7 ms per step (69% utilization), ~1505 kernel launches/step
+-- batch 16 triton
+Decode step (CUDA graphs, triton attention): batch 16, context ~512 tokens, 10.1 ms/step = 1583 tok/s
+GPU busy 7.3 ms of 10.1 ms per step (72% utilization), ~1241 kernel launches/step
+-- batch 64 sdpa
+Decode step (CUDA graphs, sdpa attention): batch 64, context ~512 tokens, 51.7 ms/step = 1237 tok/s
+GPU busy 32.4 ms of 51.7 ms per step (63% utilization), ~1601 kernel launches/step
+-- batch 64 triton
+Decode step (CUDA graphs, triton attention): batch 64, context ~512 tokens, 51.5 ms/step = 1244 tok/s
+GPU busy 31.8 ms of 51.5 ms per step (62% utilization), ~1337 kernel launches/step
+== compare
+name, memory.total [MiB], driver_version
+NVIDIA GeForce RTX 4090, 24564 MiB, 595.91.07
+model=Qwen/Qwen2.5-0.5B-Instruct levels=1,4,16,64 input=512 output=128 dtype=bfloat16
+== vLLM
+  waiting for server on :8000 ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      3.41     435.9      27.5      35.0     2.09     2.13     4.31      305.7
+conc=4           64/64     13.03    1668.3      43.3      53.6     2.05     2.13     4.19      317.4
+conc=16          64/64     42.83    5482.5      88.0     151.7     2.21     2.57    11.25      418.3
+conc=64         256/256    92.54   11845.5     202.2     435.4     3.72     4.73    14.89      783.2
+
+Saved results to benchmarks/results/gpu/vllm-20261103-013923.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/vllm-20261103-013923.json
+== nanoserve
+  waiting for server on :8000 ...
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      1.34     171.4      35.6      43.1     5.60     5.70    16.87      760.7
+conc=4           64/64      3.88     496.8      66.5      80.8     7.61     7.93    22.60     1060.0
+conc=16          64/64      8.35    1069.2      86.5     252.3    13.88    15.41    41.08     2060.3
+conc=64         256/256     7.96    1019.3     189.2    1144.6    61.44    62.61   174.72     8879.9
+
+Saved results to benchmarks/results/gpu/nanoserve-20261103-014133.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/nanoserve-20261103-014133.json
+== Profiling a nanoserve decode step
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 1147.69it/s]
+USDT:2026-11-03 01:41:47 2916:2916 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-03 01:41:47 2916:2916 SyncActivityProfilerHandler.cpp:46] profiler_stop
+
+Decode step (CUDA graphs, triton attention): batch 16, context ~512 tokens, 10.7 ms/step = 1500 tok/s
+
+GPU busy 7.2 ms of 10.7 ms per step (68% utilization), ~1241 kernel launches/step
+
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                   _paged_decode_kernel         0.00%       0.000us         0.00%       0.000us       0.000us      22.922ms        31.64%      22.922ms      95.507us           240  
+                                            aten::copy_         0.31%     393.550us        61.54%      77.623ms       1.941ms      17.424ms        24.05%      17.424ms     435.603us            40  
+                       Memcpy DtoH (Device -> Pageable)         0.00%       0.000us         0.00%       0.000us       0.000us      17.340ms        23.94%      17.340ms       1.734ms            10  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.307ms        15.61%      11.307ms       9.422us          1200  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us       5.818ms         8.03%       5.818ms      11.874us           490  
+                                               aten::mm         0.45%     561.750us         0.52%     658.920us      65.892us       2.994ms         4.13%       2.994ms     299.421us            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       2.604ms         3.59%       2.604ms       1.784us          1460  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.760ms         2.43%       1.760ms       2.444us           720  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       1.713ms         2.36%       1.713ms       1.181us          1450  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.202ms         1.66%       1.202ms       2.452us           490  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.065ms         1.47%       1.065ms       2.220us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     882.348us         1.22%     882.348us       0.910us           970  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     809.519us         1.12%     809.519us       1.652us           490  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us     783.707us         1.08%     783.707us       1.633us           480  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     551.271us         0.76%     551.271us       1.148us           480  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 126.129ms
+Self CUDA time total: 72.443ms
+
+Trace written to benchmarks/results/gpu/nanoserve_decode_trace.json
+== Results
+Saved plot to benchmarks/results/gpu/vllm_vs_nanoserve.png
+  load |         output tok/s         |         TTFT p50 ms          |         TPOT p50 ms         
+       |      vllm nanoserve    ratio |      vllm nanoserve    ratio |      vllm nanoserve    ratio
+---------------------------------------------------------------------------------------------------
+     1 |       436       171    0.39x |        27        36    1.29x |       2.1       5.6    2.68x
+     4 |      1668       497    0.30x |        43        66    1.53x |       2.1       7.6    3.71x
+    16 |      5482      1069    0.20x |        88        87    0.98x |       2.2      13.9    6.27x
+    64 |     11845      1019    0.09x |       202       189    0.94x |       3.7      61.4   16.49x
+
+ratio = nanoserve / vllm. For tok/s higher is better; for latency lower is better.
+
+Done. Everything is in benchmarks/results/gpu/ -- copy it back and commit it.
+BENCH_EXIT=0
