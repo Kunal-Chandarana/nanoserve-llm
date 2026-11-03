@@ -1,0 +1,23 @@
+539 steps over 4.39 s: 123 steps/s, 1882 tokens/s sampled, mean 8.14 ms per step
+
+Mean ms per step, by kind (tokens = tokens in the step):
+kind       steps  share  tokens     inbox  schedule   prepare   forward    sample    finish   deliver    total
+graphed      517    96%      16      0.01      0.04      0.05      0.71      4.78      0.02      0.49     6.10
+mixed         20     4%    1785      0.26      0.04      0.06     45.02      0.62      0.03      0.35    46.38
+prefill        2     0%     537      0.02      0.03      0.02    103.46      5.64      0.01      0.08   109.25
+
+Where the wall time went:
+  inbox              9 ms    0.2%
+  schedule          19 ms    0.4%
+  prepare           27 ms    0.6%
+  forward         1474 ms   33.6%
+  sample          2497 ms   56.9%
+  finish             9 ms    0.2%
+  deliver          263 ms    6.0%
+  gap               88 ms    2.0%   (between steps: GIL or idle)
+  graphed steps         3152 ms   71.9% of wall
+  decode steps             0 ms    0.0% of wall
+  mixed steps            928 ms   21.1% of wall
+  prefill steps          218 ms    5.0% of wall
+
+Detokenize (HTTP thread): 448 ms over 8256 calls, 54 us per call, 10.2% of wall

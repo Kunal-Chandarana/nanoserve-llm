@@ -1,0 +1,12 @@
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 7 files:  14%|█▍        | 1/7 [00:00<00:01,  4.81it/s]Fetching 7 files:  57%|█████▋    | 4/7 [00:00<00:00, 10.32it/s]Fetching 7 files: 100%|██████████| 7/7 [00:03<00:00,  1.78it/s]Fetching 7 files: 100%|██████████| 7/7 [00:03<00:00,  2.11it/s]
+KV cache: 43690 blocks x 16 tokens = 699,040 tokens (8.0 GB)
+Decode attention: sdpa
+Captured 88 decode CUDA graphs in 6.0 s
+/root/nanoserve-llm/nanoserve/server.py:234: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("shutdown")

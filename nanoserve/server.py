@@ -46,6 +46,12 @@ class TokenEvent:
     error: Optional[str] = None
 
 
+def _put_all(items: List[tuple]):
+    """Runs on the event loop: hand each request its event."""
+    for events, event in items:
+        events.put_nowait(event)
+
+
 class EngineWorker:
     """Owns the engine and runs its step loop on a dedicated thread."""
 
@@ -130,13 +136,22 @@ class EngineWorker:
                 self._subscribers.clear()
                 continue
             t_deliver = time.perf_counter()
+            # One call_soon_threadsafe per event loop per step, not per token:
+            # each call wakes the loop through its self-pipe and takes the GIL,
+            # and at concurrency 64 the per-token version cost 1.8 ms a step.
+            by_loop: Dict[asyncio.AbstractEventLoop, List[tuple]] = {}
             for out in outputs:
                 req = self.engine.requests[out.request_id]
-                self._deliver(out.request_id, TokenEvent(out.new_token_id, out.finished, out.finish_reason,
-                                                         len(req.prompt_ids)))
+                sub = self._subscribers.get(out.request_id)
+                if sub:
+                    loop, events = sub
+                    by_loop.setdefault(loop, []).append(
+                        (events, TokenEvent(out.new_token_id, out.finished, out.finish_reason, len(req.prompt_ids))))
                 if out.finished:
                     self._subscribers.pop(out.request_id, None)
                     self.engine.release(out.request_id)
+            for loop, items in by_loop.items():
+                loop.call_soon_threadsafe(_put_all, items)
             # The engine thread's time around the step, on the step's own log entry
             # (if it logged one: a step with nothing scheduled doesn't).
             if self.engine.step_log and self.engine.step_log[-1] is not last_log:
@@ -166,8 +181,17 @@ class Detokenizer:
     """Turns a growing list of token ids into text deltas.
 
     Decoding token by token is wrong for multi-byte characters (one emoji can
-    span several tokens), so decode the whole output each time and emit what
-    is new, holding back a trailing U+FFFD until the character completes.
+    span several tokens) and for tokenizers whose spacing depends on the
+    previous token. Decoding the whole output every time is right but costs
+    O(length) per token: 17% of serving wall time at concurrency 64, on the
+    HTTP thread, holding the GIL the engine thread needs.
+
+    So, as vLLM does, decode a short window instead. ids[prefix_offset:]
+    starts at a token boundary that has already been turned into text, and
+    ids[prefix_offset:read_offset] is what was emitted from that window last
+    time. The new text is whatever the window decodes to beyond that. A
+    trailing U+FFFD means a multi-byte character is still incomplete: hold it
+    back until the next token completes it.
     """
 
     # Time spent decoding, across all requests, for /debug/stats. It runs on the
@@ -179,6 +203,8 @@ class Detokenizer:
         self.tokenizer = tokenizer
         self.ids: List[int] = []
         self.text = ""
+        self.prefix_offset = 0  # window start
+        self.read_offset = 0    # ids before this are already in self.text
 
     def add(self, token_id: int, final: bool = False) -> str:
         self.ids.append(token_id)
@@ -186,12 +212,16 @@ class Detokenizer:
 
     def flush(self, final: bool) -> str:
         start = time.perf_counter()
-        text = self.tokenizer.decode(self.ids, skip_special_tokens=True)
+        decode = self.tokenizer.decode
+        prefix_text = decode(self.ids[self.prefix_offset:self.read_offset], skip_special_tokens=True)
+        new_text = decode(self.ids[self.prefix_offset:], skip_special_tokens=True)
         Detokenizer.total_ms += 1000 * (time.perf_counter() - start)
         Detokenizer.num_calls += 1
-        if not final and text.endswith("�"):
+        if not final and (len(new_text) <= len(prefix_text) or new_text.endswith("�")):
             return ""
-        delta, self.text = text[len(self.text):], text
+        delta = new_text[len(prefix_text):]
+        self.prefix_offset, self.read_offset = self.read_offset, len(self.ids)
+        self.text += delta
         return delta
 
 

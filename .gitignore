@@ -286,11 +286,15 @@ scratch/
 experiments/
 mock_server.log
 
-# Keep GPU comparison results (benchmarks/compare_engines.sh) in the repo,
-# except the profiler trace, which is large.
+# Keep GPU comparison results (benchmarks/compare_engines.sh) and serving
+# breakdowns (benchmarks/serving_breakdown.sh) in the repo, except the
+# profiler trace, which is large.
 !benchmarks/results/
 benchmarks/results/*
 !benchmarks/results/gpu*/
 !benchmarks/results/gpu*/**/*.json
 !benchmarks/results/gpu*/**/*.log
 benchmarks/results/gpu*/**/*_trace.json
+!benchmarks/results/serving-breakdown/
+!benchmarks/results/serving-breakdown/**/*.json
+!benchmarks/results/serving-breakdown/**/*.log

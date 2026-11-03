@@ -66,6 +66,9 @@ def test_mixed_steps_fall_back_to_eager(model):
         step += 1
     assert [engine.requests[i].output_ids for i in ids] == reference(model, prompts, 9)
     assert 0 < len(calls) < step
+    # Steps mixing a new prompt's prefill with running decodes split: the
+    # decodes still go through the graph path, the prefill runs eagerly.
+    assert any(s["split"] for s in engine.step_log)
 
 
 def test_preemption_with_graphs(model):

@@ -12,10 +12,11 @@ time of a serving run actually goes, from the per-step log the server keeps.
     python benchmarks/step_stats.py --url http://localhost:8000 [--save stats.json]
     python benchmarks/step_stats.py --file stats.json   # re-analyze saved stats
 
-Steps fall into four kinds:
+Steps fall into five kinds:
 - graphed: pure decode, replayed from a CUDA graph
+- split:   decodes plus prefill chunks; decodes from a graph, prefill eagerly
 - decode:  pure decode, run eagerly (no graphs, e.g. CPU or --enforce-eager)
-- mixed:   decodes plus prefill chunks, run eagerly
+- mixed:   decodes plus prefill chunks, all run eagerly
 - prefill: prefill only, run eagerly
 
 "gap" is wall time between the end of one step's bookkeeping and the start of
@@ -29,14 +30,14 @@ from collections import defaultdict
 from typing import Dict, List
 
 PHASES = ["inbox_ms", "schedule_ms", "prepare_ms", "forward_ms", "sample_ms", "finish_ms", "deliver_ms"]
-
-
-KINDS = ("graphed", "decode", "mixed", "prefill")
+KINDS = ("graphed", "split", "decode", "mixed", "prefill")
 
 
 def kind(step: Dict) -> str:
     if step.get("graphed"):
         return "graphed"
+    if step.get("split"):
+        return "split"
     if not step.get("prefill_tokens"):
         return "decode"
     return "mixed" if step.get("decode_seqs") else "prefill"
