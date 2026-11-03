@@ -109,6 +109,7 @@ class EngineWorker:
             try:
                 if not self.engine.has_unfinished_requests():
                     self._handle_or_stop(self._inbox.get())
+                t_inbox = time.perf_counter()
                 while True:
                     self._handle_or_stop(self._inbox.get_nowait())
             except queue.Empty:
@@ -117,6 +118,8 @@ class EngineWorker:
                 return
             if not self.engine.has_unfinished_requests():
                 continue
+            t_step = time.perf_counter()
+            last_log = self.engine.step_log[-1] if self.engine.step_log else None
             try:
                 outputs = self.engine.step()
             except Exception as e:  # fail every in-flight request rather than hang them
@@ -126,6 +129,7 @@ class EngineWorker:
                     self.engine.release(rid)
                 self._subscribers.clear()
                 continue
+            t_deliver = time.perf_counter()
             for out in outputs:
                 req = self.engine.requests[out.request_id]
                 self._deliver(out.request_id, TokenEvent(out.new_token_id, out.finished, out.finish_reason,
@@ -133,6 +137,12 @@ class EngineWorker:
                 if out.finished:
                     self._subscribers.pop(out.request_id, None)
                     self.engine.release(out.request_id)
+            # The engine thread's time around the step, on the step's own log entry
+            # (if it logged one: a step with nothing scheduled doesn't).
+            if self.engine.step_log and self.engine.step_log[-1] is not last_log:
+                log = self.engine.step_log[-1]
+                log["inbox_ms"] = 1000 * (t_step - t_inbox)
+                log["deliver_ms"] = 1000 * (time.perf_counter() - t_deliver)
 
     def _handle_or_stop(self, cmd: tuple):
         if cmd[0] == "stop":
@@ -160,6 +170,11 @@ class Detokenizer:
     is new, holding back a trailing U+FFFD until the character completes.
     """
 
+    # Time spent decoding, across all requests, for /debug/stats. It runs on the
+    # HTTP thread, which shares the GIL with the engine thread.
+    total_ms = 0.0
+    num_calls = 0
+
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.ids: List[int] = []
@@ -170,7 +185,10 @@ class Detokenizer:
         return self.flush(final)
 
     def flush(self, final: bool) -> str:
+        start = time.perf_counter()
         text = self.tokenizer.decode(self.ids, skip_special_tokens=True)
+        Detokenizer.total_ms += 1000 * (time.perf_counter() - start)
+        Detokenizer.num_calls += 1
         if not final and text.endswith("�"):
             return ""
         delta, self.text = text[len(self.text):], text
@@ -224,6 +242,19 @@ def build_app(worker: EngineWorker, tokenizer, model_name: str) -> FastAPI:
     @app.get("/metrics")
     async def metrics():
         return worker.stats()
+
+    # Serving-loop analysis (benchmarks/step_stats.py): reset, run a load, fetch.
+    @app.post("/debug/reset")
+    async def debug_reset():
+        worker.engine.step_log.clear()
+        Detokenizer.total_ms, Detokenizer.num_calls = 0.0, 0
+        return {"ok": True}
+
+    @app.get("/debug/stats")
+    async def debug_stats():
+        # deque.copy() is atomic; iterating while the engine thread appends isn't.
+        return {"steps": list(worker.engine.step_log.copy()),
+                "detokenize_ms": Detokenizer.total_ms, "detokenize_calls": Detokenizer.num_calls}
 
     @app.get("/v1/models")
     async def models():
