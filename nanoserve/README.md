@@ -13,6 +13,7 @@ implementation.
 | 5 | Head-to-head with `vllm serve` on the same GPU, with a write-up of the gap | ✅ |
 | 6 | Batched paged attention: one gather + one SDPA call per layer for the whole batch | ✅ |
 | 7 | CUDA graphs for decode steps | ✅ |
+| 8 | GPU-side sampling, and a Triton paged-attention kernel (opt-in) | ✅ |
 
 ## Design
 
@@ -367,14 +368,110 @@ in [`benchmarks/results/gpu-step7/`](../benchmarks/results/gpu-step7/).
   the step, so what's left is the work itself, not overhead.
 - **At concurrency 64 the bottleneck has moved to the GPU.** Throughput is
   lower at 64 than at 16, and a batch-64 step spends 27 ms of real GPU time.
-  Most of it is the padded gather: every layer copies each sequence's KV
-  blocks, padded to a power-of-two bucket, into one dense tensor before SDPA.
-  vLLM's kernel reads K/V straight from the blocks, with no copy.
 
-**Next:** a real paged-attention kernel (for example a Triton kernel, or
-FlashAttention's / FlashInfer's paged APIs) that reads K/V from the block
-table in place. That's what's left between nanoserve and vLLM at high
-concurrency.
+  ~~Most of it is the padded gather.~~ **Correction (step 8):** that was a
+  guess from the step's shape, not from the profile's breakdown, and it was
+  wrong. The breakdown shows 81% of that GPU time is one device-to-host
+  memcpy: the full logits going to the CPU for sampling. Attention is ~2.5 ms
+  of the step. See step 8.
+
+## GPU-side sampling and a Triton paged-attention kernel (step 8)
+
+Step 8 set out to replace the padded gather with a kernel that reads K/V
+through the block table, as vLLM's do. The kernel works, but it isn't what
+made step 8 fast. Reading the profile's breakdown is.
+
+### The Triton kernel
+
+[`triton_attention.py`](triton_attention.py): one program per (sequence, KV
+head). It loads the GQA group's query heads together, so each K/V block is
+read once for the group, walks the block table with an online softmax, and
+stops at the context length. All 12 GPU tests pass: against a plain-PyTorch
+reference across dtypes, GQA layouts, block boundaries, shuffled blocks and
+strided inputs, and end to end against SDPA, eager and inside CUDA graphs.
+
+Speed, per decode step with CUDA graphs on (RTX 4090, ~512-token context):
+
+| Batch | Gather + SDPA | Triton kernel |
+|---|---|---|
+| 1 | 4.4 ms | 5.1 ms |
+| 16 | 5.7 ms | 6.3 ms |
+| 64 | 7.4 ms | 7.0 ms |
+
+It wins slightly at batch 64 and loses at small batches. With one sequence
+there are only `num_kv_heads` = 2 programs, each walking all ~32 blocks in
+turn, so most of the GPU idles. vLLM's kernels split long contexts across
+more programs and merge the partial softmaxes ("split-K", or
+flash-decoding). Without that, SDPA stays the default and the kernel is
+opt-in (`--attention-backend triton`). At these short contexts, attention is
+a small part of the step either way. The kernel matters more as contexts
+get longer, since the gather copies the whole context every layer.
+
+### The actual bottleneck: sampling on the CPU
+
+The first step 8 run, with the kernel on, changed almost nothing (51.5 vs
+51.7 ms at batch 64). The profile's top row explained why:
+
+```
+Memcpy DtoH (Device -> Pageable)   257.7 ms   81.06%   (10 steps)
+_paged_decode_kernel                25.5 ms    8.01%
+```
+
+Every step, the engine copied the full logits, `[64, 151936]` fp32 = 39 MB,
+to the CPU and sampled there. That's 26 ms of a 51 ms step. Qwen's 152k-token
+vocabulary makes it worse; with a 32k vocab it would have been a fifth of
+that. vLLM samples on the GPU and returns token ids only.
+
+`LLMEngine._sample_batch` now does the same. Greedy rows are one batched
+argmax, unseeded random rows one batched multinomial, and only the token ids
+come back. Seeded requests keep their per-request CPU generator, so a seed
+reproduces on any device; only their rows are copied. A new test mixes all
+three modes in one batch.
+
+### Results: RTX 4090
+
+Decode step, CUDA graphs on, default (SDPA) attention
+([`gpu-step8/profile_*.txt`](../benchmarks/results/gpu-step8/)):
+
+| Batch | Step 7 | Step 8 | GPU busy |
+|---|---|---|---|
+| 1 | 4.6 ms | 4.4 ms | 99% |
+| 16 | 9.3 ms | 5.7 ms | 87% |
+| 64 | 51.7 ms | **7.4 ms** (7×) | 82% |
+
+Serving benchmark, same workload as steps 5–7. The gap is against this run's
+vLLM. Data in [`benchmarks/results/gpu-step8/`](../benchmarks/results/gpu-step8/);
+the first run, with the kernel on and CPU sampling, is in
+[`gpu-step8/triton-default/`](../benchmarks/results/gpu-step8/triton-default/).
+
+![vLLM vs nanoserve, steps 5 to 8](../benchmarks/results/gpu-step8/steps_5_to_8.png)
+
+| Concurrency | nanoserve step 7 | step 8 | vLLM | Gap to vLLM, step 5 → 6 → 7 → 8 |
+|---|---|---|---|---|
+| 1 | 215 tok/s | 220 | 438 | 13× → 12× → 2.1× → **2.0×** |
+| 4 | 622 | 688 | 1,672 | 27× → 12× → 2.9× → **2.4×** |
+| 16 | 1,471 | 1,807 | 5,554 | 67× → 12× → 4.0× → **3.1×** |
+| 64 | 1,249 | 3,153 | 11,955 | 136× → 16× → 10.6× → **3.8×** |
+
+nanoserve now scales past 16 concurrent requests instead of flattening.
+Startup captures 88 decode graphs in 5.3 s.
+
+**What's left.** At batch 64 a profiled decode step takes 7.4 ms, which would
+be ~8,600 tok/s, yet serving reaches 3,153 tok/s with a TPOT of 19 ms. The
+missing ~12 ms per step is outside the model:
+
+- prefill steps interleaved with decodes;
+- Python scheduling and bookkeeping per step;
+- the server thread re-detokenizing each request's whole output on every
+  token, for 64 streams.
+
+vLLM runs scheduling, detokenization and the API server in separate
+processes, overlapped with GPU work. Profiling the serving loop end to end,
+not just one decode step, is the next measurement.
+
+**Lesson:** read the profile's breakdown before picking the fix. Step 7's
+"most of it is the padded gather" was a guess that fit the shape of the data.
+The table would have pointed at the memcpy immediately.
 
 ## Usage
 

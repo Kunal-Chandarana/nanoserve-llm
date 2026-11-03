@@ -1,0 +1,28 @@
+
+Decode step (CUDA graphs, sdpa attention): batch 1, context ~512 tokens, 4.4 ms/step = 228 tok/s
+
+GPU busy 4.4 ms of 4.4 ms per step (99% utilization), ~1483 kernel launches/step
+
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us      11.459ms        26.34%      11.459ms      47.744us           240  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us      11.271ms        25.91%      11.271ms      15.440us           730  
+std::enable_if<!(false), void>::type internal::gemvx...         0.00%       0.000us         0.00%       0.000us       0.000us       3.198ms         7.35%       3.198ms       3.332us           960  
+                                               aten::mm         0.44%     265.670us         0.61%     369.080us      36.908us       2.866ms         6.59%       2.866ms     286.556us            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       2.454ms         5.64%       2.454ms       1.681us          1460  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.871ms         4.30%       1.871ms       1.949us           960  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       1.736ms         3.99%       1.736ms       1.197us          1450  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.219ms         2.80%       1.219ms       2.488us           490  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.049ms         2.41%       1.049ms       1.082us           970  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us     871.070us         2.00%     871.070us       1.778us           490  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     805.396us         1.85%     805.396us       1.103us           730  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     701.149us         1.61%     701.149us       1.461us           480  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us     674.953us         1.55%     674.953us       1.406us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     663.284us         1.52%     663.284us       0.921us           720  
+void at::native::vectorized_gather_kernel<16, long>(...         0.00%       0.000us         0.00%       0.000us       0.000us     624.100us         1.43%     624.100us       1.300us           480  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 60.737ms
+Self CUDA time total: 43.502ms
+

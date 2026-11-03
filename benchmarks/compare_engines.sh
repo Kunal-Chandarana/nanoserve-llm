@@ -97,7 +97,7 @@ if [[ "${SKIP_VLLM:-0}" != 1 ]]; then
 fi
 
 echo "== nanoserve"
-$PYTHON -m nanoserve.server --model "$MODEL" --port $PORT --device "$DEVICE" --dtype "$DTYPE" \
+$PYTHON -u -m nanoserve.server --model "$MODEL" --port $PORT --device "$DEVICE" --dtype "$DTYPE" \
   --max-num-seqs "$MAX_NUM_SEQS" --kv-cache-gb "$KV_CACHE_GB" \
   > "$OUT/nanoserve_server.log" 2>&1 &
 SERVER_PID=$!

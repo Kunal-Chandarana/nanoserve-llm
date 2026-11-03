@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import torch
 import torch.nn.functional as F
 
+from . import triton_attention
 from .config import ModelConfig
 
 
@@ -84,17 +85,26 @@ class AttentionBatch:
     block_tables: [B, max_blocks], padded with block 0 (masked out).
     mask: [B, 1, max_new * group, max_blocks * block_size], already expanded
       for GQA (see PagedKVCache.forward).
+    context_lens: [B], tokens each sequence attends to, including this
+      step's. The Triton decode kernel reads these instead of the mask.
     """
     token_idx: torch.Tensor
     padded_idx: torch.Tensor
     block_tables: torch.Tensor
     mask: torch.Tensor
     max_new: int
+    context_lens: Optional[torch.Tensor] = None
 
 
 class PagedKVCache:
     def __init__(self, config: ModelConfig, num_blocks: int, block_size: int,
-                 dtype: torch.dtype, device: str):
+                 dtype: torch.dtype, device: str, attention_backend: str = "sdpa"):
+        """attention_backend: how decode steps (one new token per sequence)
+        attend. "sdpa" gathers blocks into a padded tensor and calls SDPA;
+        "triton" follows the block table inside a kernel (triton_attention.py).
+        SDPA is the default: at the context lengths measured so far the two
+        cost the same per step, and the kernel is slower at batch 1 (see its
+        docstring). Prefill always uses SDPA."""
         # One extra physical block that the allocator never hands out. CUDA
         # graphs pad their batch with dummy rows; those rows write their K/V
         # here, so they can't touch a real sequence.
@@ -110,6 +120,11 @@ class PagedKVCache:
         self._step: List[Tuple[int, int]] = []  # (seq_id, num_new_tokens)
         self._slot_mapping = None
         self._batches: List[AttentionBatch] = []
+        if attention_backend not in ("triton", "sdpa"):
+            raise ValueError(f"unknown attention backend {attention_backend!r}")
+        self.use_triton = attention_backend == "triton"
+        if self.use_triton and not triton_attention.supported(self.k[0]):
+            raise ValueError("triton attention needs Triton, a CUDA device and power-of-two block size and head dim")
 
     # ---- sequence lifecycle -------------------------------------------------
 
@@ -201,7 +216,8 @@ class PagedKVCache:
         # output is dropped anyway.
         mask = (key_pos <= query_pos[..., None]) & (key_pos < context[:, None, None])
         mask = mask.repeat_interleave(self.num_queries_per_kv, dim=1)[:, None]
-        return AttentionBatch(as_tensor(token_idx), as_tensor(padded_idx), as_tensor(tables), mask, max_new)
+        return AttentionBatch(as_tensor(token_idx), as_tensor(padded_idx), as_tensor(tables), mask, max_new,
+                              context_lens=context)
 
     def end_step(self):
         for seq_id, n in self._step:
@@ -221,6 +237,10 @@ class PagedKVCache:
         _, num_heads, head_dim = q.shape
         num_kv_heads, group = k_cache.shape[2], self.num_queries_per_kv
         for b in self._batches:
+            if b.max_new == 1 and self.use_triton:
+                out[b.token_idx] = triton_attention.paged_decode_attention(
+                    q[b.token_idx], k_cache, v_cache, b.block_tables, b.context_lens)
+                continue
             num_seqs = b.block_tables.shape[0]
             # One gather for every sequence: [B, max_blocks * block_size, kv_heads, head_dim].
             keys = k_cache[b.block_tables].flatten(1, 2).transpose(1, 2)

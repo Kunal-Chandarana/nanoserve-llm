@@ -291,6 +291,6 @@ mock_server.log
 !benchmarks/results/
 benchmarks/results/*
 !benchmarks/results/gpu*/
-!benchmarks/results/gpu*/*.json
-!benchmarks/results/gpu*/*.log
-benchmarks/results/gpu*/*_trace.json
+!benchmarks/results/gpu*/**/*.json
+!benchmarks/results/gpu*/**/*.log
+benchmarks/results/gpu*/**/*_trace.json

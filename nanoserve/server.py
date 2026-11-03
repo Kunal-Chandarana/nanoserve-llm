@@ -354,6 +354,8 @@ def main():
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
     parser.add_argument("--enforce-eager", action="store_true",
                         help="Don't use CUDA graphs for decode (on by default on CUDA, as in vLLM)")
+    parser.add_argument("--attention-backend", default="sdpa", choices=["sdpa", "triton"],
+                        help="Decode attention: padded gather + SDPA, or the Triton paged kernel")
     args = parser.parse_args()
 
     dtype = getattr(torch, args.dtype)
@@ -369,7 +371,9 @@ def main():
           f"({args.kv_cache_gb} GB)")
 
     start = time.perf_counter()
-    engine = LLMEngine(model, config, cuda_graphs=False if args.enforce_eager else None)
+    engine = LLMEngine(model, config, cuda_graphs=False if args.enforce_eager else None,
+                       attention_backend=args.attention_backend)
+    print(f"Decode attention: {'triton' if engine.cache.use_triton else 'sdpa'}")
     if engine.graphs and engine.graphs.capture:
         print(f"Captured {len(engine.graphs.graphs)} decode CUDA graphs in {time.perf_counter() - start:.1f} s")
     worker = EngineWorker(engine)
