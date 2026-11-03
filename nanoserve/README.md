@@ -14,6 +14,7 @@ implementation.
 | 6 | Batched paged attention: one gather + one SDPA call per layer for the whole batch | ✅ |
 | 7 | CUDA graphs for decode steps | ✅ |
 | 8 | GPU-side sampling, and a Triton paged-attention kernel (opt-in) | ✅ |
+| 9 | Serving loop: measured end to end; split mixed steps, windowed detokenization, batched delivery, GIL switch interval | ✅ |
 
 ## Design
 
@@ -472,6 +473,91 @@ not just one decode step, is the next measurement.
 **Lesson:** read the profile's breakdown before picking the fix. Step 7's
 "most of it is the padded gather" was a guess that fit the shape of the data.
 The table would have pointed at the memcpy immediately.
+
+## The serving loop (step 9)
+
+`profile_step.py` times one decode step in isolation. Under load the engine
+also schedules, prefills arriving prompts, streams tokens and detokenizes, and
+its thread shares the GIL with the HTTP server. Step 9 measures that whole
+loop first, then fixes what the measurement shows.
+
+### Measuring it
+
+- **Per-step phase timings** in `LLMEngine.step`: schedule, prepare, forward
+  launch, sample (which includes the GPU wait) and finish, plus whether the
+  step replayed a CUDA graph.
+- **Server-side timings** around each step (inbox, delivery) and total
+  detokenization time, at `GET /debug/stats` (`POST /debug/reset` to start
+  clean).
+- [`benchmarks/step_stats.py`](../benchmarks/step_stats.py) breaks a run down
+  by step kind and shows where the wall time went, including the gap between
+  steps. [`benchmarks/serving_breakdown.sh`](../benchmarks/serving_breakdown.sh)
+  runs it per concurrency level.
+
+### What it found, and the fixes
+
+At concurrency 64 on the RTX 4090
+([before](../benchmarks/results/serving-breakdown/before/breakdown-c64.txt) /
+[after](../benchmarks/results/serving-breakdown/after/breakdown-c64.txt)):
+
+| Cost | Before | Fix | After |
+|---|---|---|---|
+| Mixed prefill + decode steps, all eager | 13% of steps, 44.6 ms each, **40% of wall** | Replay the decodes from their graph; run only the prefill chunks eagerly ([`_forward_mixed`](engine.py)) | 39.7 ms each |
+| Detokenization, re-decoding each request's whole output per token | 42 µs per call, **17% of wall** | Decode a sliding window, as vLLM does ([`Detokenizer`](server.py)) | 22 µs, 9.6% |
+| Token delivery, one cross-thread wakeup per request per token | 1.8 ms per step, **12% of wall** | One `call_soon_threadsafe` per step for all tokens | 0.07 ms |
+| Host side of a graphed decode step | 7.7 ms (vs ~0 in isolation) | GIL switch interval 5 ms → 0.5 ms (below) | 2.9 ms |
+
+Splitting mixed steps helped less than expected. The decodes weren't what
+made those steps slow; the eager prefill pass is, at ~38 ms for ~1,900 tokens
+when the matmuls alone should take ~13 ms. That's the next thing to profile.
+
+### A 35% effect hiding behind a version pin
+
+The first breakdown runs reported 4,845 tok/s at concurrency 64. The full
+comparison, with the same code on the same pod, reported 3,421. Tracking it
+down:
+
+- The breakdown had run in a fresh environment with PyTorch 2.15. Installing
+  vLLM for the comparison replaced it with vLLM's pin, 2.14. Every comparison
+  since step 5 used 2.14. A fresh 2.15 environment reproduced 4,843.
+- The whole difference was in one phase: the host side of a graphed decode
+  step took 7.7 ms under 2.14 and 1.4 ms under 2.15.
+- In isolation, without the server, both versions were identical. So it was
+  contention: the engine thread releases the GIL inside a blocking call, and
+  the HTTP thread can then hold it for up to Python's switch interval, 5 ms by
+  default, while the engine waits to launch its next step.
+- Setting `sys.setswitchinterval(0.0005)` under 2.14 took concurrency 64 from
+  3,357 to 4,523 tok/s. The server now does this by default
+  (`--gil-switch-interval-ms`).
+
+vLLM avoids the problem by design: its engine runs in its own process, so the
+API server can't hold the engine's GIL. That's the proper fix here too.
+
+### Results: RTX 4090, PyTorch 2.14
+
+Same workload as steps 5–8. The gap is against this run's vLLM. Data in
+[`benchmarks/results/gpu-step9/`](../benchmarks/results/gpu-step9/).
+
+![vLLM vs nanoserve, steps 5 to 9](../benchmarks/results/gpu-step9/steps_5_to_9.png)
+
+| Concurrency | nanoserve step 8 | step 9 | vLLM | Gap to vLLM, step 5 → 8 → 9 | TTFT p50, nanoserve / vLLM |
+|---|---|---|---|---|---|
+| 1 | 220 tok/s | 218 | 431 | 13× → 2.0× → **2.0×** | 35 / 29 ms |
+| 4 | 688 | 694 | 1,640 | 27× → 2.4× → **2.4×** | 63 / 49 ms |
+| 16 | 1,807 | 2,147 | 5,442 | 67× → 3.1× → **2.5×** | 105 / 86 ms |
+| 64 | 3,153 | 4,561 | 11,966 | 136× → 3.8× → **2.6×** | **130 / 221 ms** |
+
+Throughput at concurrency 64 is up 45% over step 8, and time to first token
+there is now lower than vLLM's. Concurrency 1 and 4 don't move: there the gap
+is the decode step itself (4.4 vs 2.1 ms per token), not the loop.
+
+**What's left:**
+
+- **The eager prefill pass** in mixed steps: still ~38 ms each, ~40% of wall at
+  concurrency 64.
+- **The decode step itself**: 4.4 ms vs vLLM's 2.1 at batch 1, with the GPU
+  ~95% busy, so this is kernel efficiency (fused ops, attention), not overhead.
+- **A separate engine process**, to remove GIL contention properly.
 
 ## Usage
 

@@ -7,15 +7,15 @@ understand how vLLM works inside. It has the same core design: a model that
 takes flat token batches, a paged KV cache, a continuous-batching scheduler
 with chunked prefill and preemption, and an OpenAI-compatible streaming server.
 On top of that come the execution-level optimizations that make vLLM fast:
-batched paged attention, CUDA graphs, GPU-side sampling, and a custom Triton
-paged-attention kernel.
+batched paged attention, CUDA graphs, GPU-side sampling, a custom Triton
+paged-attention kernel, and a serving loop tuned from end-to-end measurements.
 
 Each optimization was chosen by profiling and then measured against `vllm
 serve` on the same GPU. On an RTX 4090 with Qwen2.5-0.5B, the throughput gap
-to vLLM went from **67× to 3.1×** at 16 concurrent requests, and from **136× to
-3.8×** at 64.
+to vLLM went from **67× to 2.5×** at 16 concurrent requests, and from **136× to
+2.6×** at 64, where nanoserve's time to first token is now lower than vLLM's.
 
-![vLLM vs nanoserve across optimization steps](benchmarks/results/gpu-step8/steps_5_to_8.png)
+![vLLM vs nanoserve across optimization steps](benchmarks/results/gpu-step9/steps_5_to_9.png)
 
 ## Results: measure, profile, fix, repeat
 
@@ -28,7 +28,8 @@ throughput, nanoserve vs vLLM:
 | 5 | Baseline: algorithms right, execution slow | — | 13× behind | 67× behind | 136× behind |
 | 6 | Attention ran a Python loop per sequence: ~11,000 kernel launches per step, GPU idle 86% | [Batched paged attention](nanoserve/paged_attention.py): one gather + one SDPA call per layer | 12× | 12× | 16× |
 | 7 | ~1,470 launches per step from Python for 5.7 ms of GPU work; GPU still idle 83% | [CUDA graphs](nanoserve/cuda_graphs.py) for decode steps | **2.1×** | **4.0×** | **10.6×** |
-| 8 | 81% of GPU time at batch 64 was one memcpy: the full logits (39 MB) going to the CPU for sampling | [GPU-side sampling](nanoserve/engine.py); token ids only come back | **2.0×** | **3.1×** | **3.8×** |
+| 8 | 81% of GPU time at batch 64 was one memcpy: the full logits (39 MB) going to the CPU for sampling | [GPU-side sampling](nanoserve/engine.py); token ids only come back | 2.0× | 3.1× | 3.8× |
+| 9 | A serving-loop breakdown: mixed prefill+decode steps 40% of wall, detokenization 17%, delivery 12%, and ~6 ms per step of GIL contention | [Split mixed steps, windowed detokenization, batched delivery, shorter GIL switch interval](nanoserve/README.md#the-serving-loop-step-9) | **2.0×** | **2.5×** | **2.6×** |
 
 Decode step time across steps:
 
@@ -60,6 +61,7 @@ The full write-up, with profiles and raw data for each step, is in
 | Sampling | On the GPU: batched argmax / multinomial, only token ids return; seeded requests stay reproducible | [`engine.py`](nanoserve/engine.py) |
 | Server | OpenAI-compatible `/v1/completions` and `/v1/chat/completions`, SSE streaming, abort on disconnect, incremental detokenization, `/metrics` | [`server.py`](nanoserve/server.py) |
 | Profiler | `torch.profiler` over decode steps: step time, GPU busy time, kernel launches | [`profile_step.py`](nanoserve/profile_step.py) |
+| Serving breakdown | Per-step phase timings from the live server: step kinds, where wall time goes, gaps between steps, detokenization | [`step_stats.py`](benchmarks/step_stats.py) |
 | Benchmark | Load generator for any OpenAI-compatible server: TTFT, TPOT, ITL, E2E and goodput at p50–p99, with plots | [`benchmarks/`](benchmarks/README.md) |
 | GPU comparison | One script: installs vLLM, benchmarks both engines on the same GPU, profiles, writes a side-by-side table | [`compare_engines.sh`](benchmarks/compare_engines.sh) |
 
@@ -90,6 +92,13 @@ A few things that were harder or more interesting than expected:
   152k-token vocabulary times 64 sequences. Sampling on the GPU cut the step
   from 51.7 ms to 7.4 ms. The write-up keeps the wrong claim, struck through,
   next to the correction.
+- **A 35% effect hiding behind a version pin.** Two runs of the same code on
+  the same GPU disagreed by 40%. One environment had PyTorch 2.15; installing
+  vLLM had pinned the other to 2.14. Under 2.14, the host side of each graphed
+  decode step took 7.7 ms inside the server and ~0 in isolation: the HTTP
+  thread was holding the GIL for up to Python's 5 ms switch interval while the
+  engine waited. A 0.5 ms interval took concurrency 64 from 3,357 to 4,523
+  tok/s. vLLM sidesteps this by running its engine in a separate process.
 
 ## Run it
 
@@ -112,9 +121,11 @@ bash benchmarks/compare_engines.sh   # results, plots and logs in benchmarks/res
 
 ## Next
 
-- **The serving loop.** At batch 64 a decode step takes 7.4 ms, but serving
-  runs at a 19 ms TPOT. The rest is prefill interleaving, Python scheduling
-  and per-token detokenization; vLLM overlaps those in separate processes.
+- **Faster prefill.** At concurrency 64, steps that mix new prompts' prefill
+  with running decodes are still ~40% of wall time; the eager prefill pass
+  takes ~38 ms for ~1,900 tokens, about 3× the matmul time.
+- **A separate engine process**, as in vLLM, to remove GIL contention between
+  the engine and the HTTP server for good.
 - **Split-K for the Triton kernel**, so one long sequence uses the whole GPU.
 - **Prefix caching:** share KV blocks between requests with a common prompt
   prefix, using hash-addressed blocks with reference counts.

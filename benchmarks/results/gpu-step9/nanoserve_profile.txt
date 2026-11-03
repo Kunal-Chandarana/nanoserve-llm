@@ -1,0 +1,29 @@
+
+Decode step (CUDA graphs, sdpa attention): batch 16, context ~512 tokens, 5.7 ms/step = 2819 tok/s
+
+GPU busy 5.0 ms of 5.7 ms per step (89% utilization), ~1507 kernel launches/step
+
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.401ms        22.59%      11.401ms       9.501us          1200  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us      10.710ms        21.22%      10.710ms      44.624us           240  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us       6.002ms        11.89%       6.002ms      12.249us           490  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       4.180ms         8.28%       4.180ms       8.708us           480  
+                                               aten::mm         0.48%     325.890us         0.60%     409.840us      40.984us       3.090ms         6.12%       3.090ms     309.034us            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       2.669ms         5.29%       2.669ms       1.828us          1460  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       2.377ms         4.71%       2.377ms       2.476us           960  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       1.764ms         3.49%       1.764ms       1.216us          1450  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.241ms         2.46%       1.241ms       2.534us           490  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.097ms         2.17%       1.097ms       2.284us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     910.666us         1.80%     910.666us       0.939us           970  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     825.191us         1.63%     825.191us       1.684us           490  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us     805.607us         1.60%     805.607us       1.678us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     591.720us         1.17%     591.720us       0.822us           720  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     566.694us         1.12%     566.694us       1.181us           480  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 68.406ms
+Self CUDA time total: 50.473ms
+
+Trace written to benchmarks/results/gpu/nanoserve_decode_trace.json
