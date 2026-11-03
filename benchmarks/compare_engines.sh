@@ -2,7 +2,7 @@
 # Head-to-head: vLLM vs nanoserve on the same model, GPU and workload.
 #
 # Run on a rented NVIDIA GPU machine (an L4 / A10G / A100 / H100 all work):
-#   git clone https://github.com/Kunal-Chandarana/vLLMLearning.git && cd vLLMLearning
+#   git clone https://github.com/Kunal-Chandarana/nanoserve-llm.git && cd nanoserve-llm
 #   bash benchmarks/compare_engines.sh
 #
 # It installs vLLM, benchmarks `vllm serve`, benchmarks nanoserve with the
