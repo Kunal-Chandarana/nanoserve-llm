@@ -135,7 +135,7 @@ class DecodeGraphRunner:
         # Decode: one query per sequence, so the mask is just "key is inside
         # the context". [B, 1, 1, ctx] broadcasts over heads and the GQA group.
         attn = AttentionBatch(token_idx=rows, padded_idx=rows, block_tables=packed[:, BLOCKS:],
-                              mask=mask[:, None, None, :], max_new=1)
+                              mask=mask[:, None, None, :], max_new=1, context_lens=packed[:, CONTEXT_LEN])
         hidden = torch.empty(batch, self.model.config.hidden_size,
                              dtype=self.model.embed_tokens.weight.dtype, device=dev)
 

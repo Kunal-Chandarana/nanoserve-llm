@@ -167,16 +167,17 @@ class Scheduler:
 
 class LLMEngine:
     def __init__(self, model: Qwen2Model, config: Optional[SchedulerConfig] = None,
-                 cuda_graphs: Optional[bool] = None):
+                 cuda_graphs: Optional[bool] = None, attention_backend: str = "auto"):
         """cuda_graphs: replay decode steps from CUDA graphs. Defaults to on for
         CUDA, like vLLM without --enforce-eager. True on a CPU runs the same
-        static-buffer path eagerly, which is how the tests exercise it."""
+        static-buffer path eagerly, which is how the tests exercise it.
+        attention_backend: "auto", "triton" or "sdpa"; see PagedKVCache."""
         self.model = model
         self.config = config or SchedulerConfig()
         weight = model.embed_tokens.weight
         self.device = weight.device
         self.cache = PagedKVCache(model.config, self.config.num_blocks, self.config.block_size,
-                                  weight.dtype, weight.device)
+                                  weight.dtype, weight.device, attention_backend)
         self.scheduler = Scheduler(self.config, self.cache)
         if cuda_graphs is None:
             cuda_graphs = self.device.type == "cuda"

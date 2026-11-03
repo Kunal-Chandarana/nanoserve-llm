@@ -34,12 +34,14 @@ def main():
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--trace", help="Write a Chrome trace (open in chrome://tracing or Perfetto)")
     parser.add_argument("--enforce-eager", action="store_true", help="Don't use CUDA graphs for decode")
+    parser.add_argument("--attention-backend", default="auto", choices=["auto", "triton", "sdpa"])
     args = parser.parse_args()
 
     model = load_model(args.model, getattr(torch, args.dtype), args.device)
     engine = LLMEngine(model, SchedulerConfig(max_num_seqs=args.batch, num_blocks=4096,
                                               max_num_batched_tokens=args.batch * args.prompt_len),
-                       cuda_graphs=False if args.enforce_eager else None)
+                       cuda_graphs=False if args.enforce_eager else None,
+                       attention_backend=args.attention_backend)
     g = torch.Generator().manual_seed(0)
     for _ in range(args.batch):
         prompt = torch.randint(0, model.config.vocab_size, (args.prompt_len,), generator=g).tolist()
@@ -64,6 +66,7 @@ def main():
         sync()
 
     mode = "CUDA graphs" if engine.graphs and engine.graphs.capture else "eager"
+    mode += ", triton attention" if engine.cache.use_triton else ", sdpa attention"
     print(f"\nDecode step ({mode}): batch {args.batch}, context ~{args.prompt_len} tokens, "
           f"{step_ms:.1f} ms/step = {1000 * args.batch / step_ms:.0f} tok/s\n")
 
