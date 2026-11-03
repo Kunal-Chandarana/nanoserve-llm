@@ -1,0 +1,9 @@
+  load |         output tok/s         |         TTFT p50 ms          |         TPOT p50 ms         
+       |      vllm nanoserve    ratio |      vllm nanoserve    ratio |      vllm nanoserve    ratio
+---------------------------------------------------------------------------------------------------
+     1 |       430       217    0.51x |        29        35    1.19x |       2.1       4.4    2.07x
+     4 |      1640       694    0.42x |        49        63    1.30x |       2.1       5.3    2.57x
+    16 |      5441      2147    0.39x |        86       105    1.21x |       2.3       6.6    2.93x
+    64 |     11966      4561    0.38x |       221       130    0.59x |       3.5      13.0    3.65x
+
+ratio = nanoserve / vllm. For tok/s higher is better; for latency lower is better.

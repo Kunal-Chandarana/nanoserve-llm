@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -44,6 +45,12 @@ class TokenEvent:
     finish_reason: Optional[str] = None
     num_prompt_tokens: int = 0
     error: Optional[str] = None
+
+
+def _put_all(items: List[tuple]):
+    """Runs on the event loop: hand each request its event."""
+    for events, event in items:
+        events.put_nowait(event)
 
 
 class EngineWorker:
@@ -109,6 +116,7 @@ class EngineWorker:
             try:
                 if not self.engine.has_unfinished_requests():
                     self._handle_or_stop(self._inbox.get())
+                t_inbox = time.perf_counter()
                 while True:
                     self._handle_or_stop(self._inbox.get_nowait())
             except queue.Empty:
@@ -117,6 +125,8 @@ class EngineWorker:
                 return
             if not self.engine.has_unfinished_requests():
                 continue
+            t_step = time.perf_counter()
+            last_log = self.engine.step_log[-1] if self.engine.step_log else None
             try:
                 outputs = self.engine.step()
             except Exception as e:  # fail every in-flight request rather than hang them
@@ -126,13 +136,29 @@ class EngineWorker:
                     self.engine.release(rid)
                 self._subscribers.clear()
                 continue
+            t_deliver = time.perf_counter()
+            # One call_soon_threadsafe per event loop per step, not per token:
+            # each call wakes the loop through its self-pipe and takes the GIL,
+            # and at concurrency 64 the per-token version cost 1.8 ms a step.
+            by_loop: Dict[asyncio.AbstractEventLoop, List[tuple]] = {}
             for out in outputs:
                 req = self.engine.requests[out.request_id]
-                self._deliver(out.request_id, TokenEvent(out.new_token_id, out.finished, out.finish_reason,
-                                                         len(req.prompt_ids)))
+                sub = self._subscribers.get(out.request_id)
+                if sub:
+                    loop, events = sub
+                    by_loop.setdefault(loop, []).append(
+                        (events, TokenEvent(out.new_token_id, out.finished, out.finish_reason, len(req.prompt_ids))))
                 if out.finished:
                     self._subscribers.pop(out.request_id, None)
                     self.engine.release(out.request_id)
+            for loop, items in by_loop.items():
+                loop.call_soon_threadsafe(_put_all, items)
+            # The engine thread's time around the step, on the step's own log entry
+            # (if it logged one: a step with nothing scheduled doesn't).
+            if self.engine.step_log and self.engine.step_log[-1] is not last_log:
+                log = self.engine.step_log[-1]
+                log["inbox_ms"] = 1000 * (t_step - t_inbox)
+                log["deliver_ms"] = 1000 * (time.perf_counter() - t_deliver)
 
     def _handle_or_stop(self, cmd: tuple):
         if cmd[0] == "stop":
@@ -156,24 +182,47 @@ class Detokenizer:
     """Turns a growing list of token ids into text deltas.
 
     Decoding token by token is wrong for multi-byte characters (one emoji can
-    span several tokens), so decode the whole output each time and emit what
-    is new, holding back a trailing U+FFFD until the character completes.
+    span several tokens) and for tokenizers whose spacing depends on the
+    previous token. Decoding the whole output every time is right but costs
+    O(length) per token: 17% of serving wall time at concurrency 64, on the
+    HTTP thread, holding the GIL the engine thread needs.
+
+    So, as vLLM does, decode a short window instead. ids[prefix_offset:]
+    starts at a token boundary that has already been turned into text, and
+    ids[prefix_offset:read_offset] is what was emitted from that window last
+    time. The new text is whatever the window decodes to beyond that. A
+    trailing U+FFFD means a multi-byte character is still incomplete: hold it
+    back until the next token completes it.
     """
+
+    # Time spent decoding, across all requests, for /debug/stats. It runs on the
+    # HTTP thread, which shares the GIL with the engine thread.
+    total_ms = 0.0
+    num_calls = 0
 
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         self.ids: List[int] = []
         self.text = ""
+        self.prefix_offset = 0  # window start
+        self.read_offset = 0    # ids before this are already in self.text
 
     def add(self, token_id: int, final: bool = False) -> str:
         self.ids.append(token_id)
         return self.flush(final)
 
     def flush(self, final: bool) -> str:
-        text = self.tokenizer.decode(self.ids, skip_special_tokens=True)
-        if not final and text.endswith("�"):
+        start = time.perf_counter()
+        decode = self.tokenizer.decode
+        prefix_text = decode(self.ids[self.prefix_offset:self.read_offset], skip_special_tokens=True)
+        new_text = decode(self.ids[self.prefix_offset:], skip_special_tokens=True)
+        Detokenizer.total_ms += 1000 * (time.perf_counter() - start)
+        Detokenizer.num_calls += 1
+        if not final and (len(new_text) <= len(prefix_text) or new_text.endswith("�")):
             return ""
-        delta, self.text = text[len(self.text):], text
+        delta = new_text[len(prefix_text):]
+        self.prefix_offset, self.read_offset = self.read_offset, len(self.ids)
+        self.text += delta
         return delta
 
 
@@ -224,6 +273,19 @@ def build_app(worker: EngineWorker, tokenizer, model_name: str) -> FastAPI:
     @app.get("/metrics")
     async def metrics():
         return worker.stats()
+
+    # Serving-loop analysis (benchmarks/step_stats.py): reset, run a load, fetch.
+    @app.post("/debug/reset")
+    async def debug_reset():
+        worker.engine.step_log.clear()
+        Detokenizer.total_ms, Detokenizer.num_calls = 0.0, 0
+        return {"ok": True}
+
+    @app.get("/debug/stats")
+    async def debug_stats():
+        # deque.copy() is atomic; iterating while the engine thread appends isn't.
+        return {"steps": list(worker.engine.step_log.copy()),
+                "detokenize_ms": Detokenizer.total_ms, "detokenize_calls": Detokenizer.num_calls}
 
     @app.get("/v1/models")
     async def models():
@@ -356,7 +418,17 @@ def main():
                         help="Don't use CUDA graphs for decode (on by default on CUDA, as in vLLM)")
     parser.add_argument("--attention-backend", default="sdpa", choices=["sdpa", "triton"],
                         help="Decode attention: padded gather + SDPA, or the Triton paged kernel")
+    parser.add_argument("--gil-switch-interval-ms", type=float, default=0.5,
+                        help="Python's GIL switch interval (default in Python: 5 ms); see below")
     args = parser.parse_args()
+
+    # The engine thread and the HTTP thread share one GIL. When the engine
+    # thread releases it inside a blocking call, the HTTP thread can keep it
+    # for up to the switch interval, 5 ms by default, while the engine waits
+    # to launch the next step. Under torch 2.14 this cost ~6 ms per decode
+    # step at concurrency 64 (3,357 -> 4,523 tok/s with 0.5 ms). vLLM avoids
+    # the contention entirely by running the engine in its own process.
+    sys.setswitchinterval(args.gil_switch_interval_ms / 1000)
 
     dtype = getattr(torch, args.dtype)
     model_dir = download(args.model)

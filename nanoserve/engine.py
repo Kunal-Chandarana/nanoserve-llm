@@ -218,20 +218,30 @@ class LLMEngine:
         return self.scheduler.has_work()
 
     def step(self) -> List[StepOutput]:
+        # Wall-clock phases of the step, for serving-loop analysis (step_stats.py).
+        # GPU work is asynchronous: "forward" is the time to launch it, and the
+        # wait for it lands in "sample", where the token ids come back. A step
+        # with nothing to sample (a mid-prompt chunk) doesn't wait, so its GPU
+        # time shows up in the next step's "sample".
+        t0 = time.perf_counter()
         batch = self.scheduler.schedule()
         if not batch:
             return []
+        t1 = time.perf_counter()
 
         input_ids = []
         for req, n in batch:
             input_ids.extend(req.all_token_ids[req.num_computed_tokens:req.num_computed_tokens + n])
         step = [(req.request_id, n) for req, n in batch]
-        if self.graphs and self.graphs.supports(step):
+        t2 = time.perf_counter()
+        graphed = bool(self.graphs and self.graphs.supports(step))
+        split = False
+        if graphed:
             hidden = self.graphs.run(step, input_ids)
+            self.cache.end_step()
         else:
-            positions = self.cache.begin_step(step)
-            hidden = self.model(torch.tensor(input_ids, device=self.device), positions, self.cache)
-        self.cache.end_step()
+            hidden, split = self._forward_mixed(step, input_ids)
+        t3 = time.perf_counter()
 
         # Which requests produce a token this step, and which hidden row each samples from.
         samplers, rows, offset = [], [], 0
@@ -241,18 +251,29 @@ class LLMEngine:
             if req.num_computed_tokens == req.num_tokens:
                 samplers.append(req)
                 rows.append(offset - 1)
-        self.step_log.append({
+        log = {
             "num_seqs": len(batch),
             "num_tokens": len(input_ids),
             "prefill_tokens": sum(n for req, n in batch if n > 1 or not req.output_ids),
             "decode_seqs": sum(1 for req, n in batch if n == 1 and req.output_ids),
             "free_blocks": self.cache.allocator.num_free,
-        })
+            "graphed": graphed,
+            "split": split,
+            "num_sampled": len(samplers),
+            "start": t0,
+            "schedule_ms": 1000 * (t1 - t0),
+            "prepare_ms": 1000 * (t2 - t1),
+            "forward_ms": 1000 * (t3 - t2),
+        }
+        self.step_log.append(log)
         if not samplers:
+            log["sample_ms"] = log["finish_ms"] = 0.0
             return []
 
         logits = self.model.compute_logits(hidden[torch.tensor(rows, device=self.device)])
         tokens = self._sample_batch(logits, samplers)
+        t4 = time.perf_counter()
+        log["sample_ms"] = 1000 * (t4 - t3)
         outputs = []
         now = time.perf_counter()
         for req, token in zip(samplers, tokens):
@@ -267,7 +288,50 @@ class LLMEngine:
             if reason:
                 self.scheduler.finish(req, reason)
             outputs.append(StepOutput(req.request_id, token, reason is not None, reason))
+        log["finish_ms"] = 1000 * (time.perf_counter() - t4)
         return outputs
+
+    def _forward_mixed(self, step: List[Tuple[int, int]], input_ids: List[int]) -> Tuple[torch.Tensor, bool]:
+        """Forward pass for a step that can't be replayed whole from a CUDA graph.
+
+        Under load most such steps are mixed: a few new prompts' prefill
+        chunks plus every running request's one-token decode. Run as one
+        eager pass, the decodes lose their graph, and the step pays Python
+        launch overhead for every kernel (44.6 ms per mixed step at
+        concurrency 64, 40% of serving wall time). Instead, replay the
+        decodes from their graph and run only the prefill chunks eagerly:
+        two passes over disjoint sequences, so neither sees the other's KV.
+        Returns hidden states in the step's token order, and whether it split.
+        """
+        decode_idx = [i for i, (_, n) in enumerate(step) if n == 1]
+        decodes = [step[i] for i in decode_idx]
+        if not (self.graphs and decodes and len(decodes) < len(step) and self.graphs.supports(decodes)):
+            positions = self.cache.begin_step(step)
+            hidden = self.model(torch.tensor(input_ids, device=self.device), positions, self.cache)
+            self.cache.end_step()
+            return hidden, False
+
+        starts, offset = [], 0
+        for _, n in step:
+            starts.append(offset)
+            offset += n
+        is_decode = set(decode_idx)
+        prefills = [s for i, s in enumerate(step) if i not in is_decode]
+        prefill_rows = [r for i, (_, n) in enumerate(step) if i not in is_decode
+                        for r in range(starts[i], starts[i] + n)]
+        decode_rows = [starts[i] for i in decode_idx]
+
+        decode_hidden = self.graphs.run(decodes, [input_ids[r] for r in decode_rows])
+        self.cache.end_step()
+        positions = self.cache.begin_step(prefills)
+        prefill_hidden = self.model(torch.tensor([input_ids[r] for r in prefill_rows], device=self.device),
+                                    positions, self.cache)
+        self.cache.end_step()
+
+        hidden = prefill_hidden.new_empty(len(input_ids), prefill_hidden.shape[-1])
+        hidden[torch.tensor(decode_rows, device=self.device)] = decode_hidden
+        hidden[torch.tensor(prefill_rows, device=self.device)] = prefill_hidden
+        return hidden, True
 
     def _sample_batch(self, logits: torch.Tensor, reqs: List[Request]) -> List[int]:
         """Sample one token per row, on the logits' device.

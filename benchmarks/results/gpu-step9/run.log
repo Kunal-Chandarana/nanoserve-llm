@@ -1,0 +1,133 @@
+torch 2.14.0+cu130
+== breakdown
+== concurrency 16
+conc=16          64/64     16.74    2142.9     104.5     193.0     6.65     7.05    34.03     1038.5
+539 steps over 4.09 s: 132 steps/s, 2017 tokens/s sampled, mean 7.59 ms per step
+
+Mean ms per step, by kind (tokens = tokens in the step):
+kind       steps  share  tokens     inbox  schedule   prepare   forward    sample    finish   deliver    total
+graphed      517    96%      16      0.01      0.03      0.04      1.29      4.71      0.02      0.03     6.12
+split         20     4%    1785      0.05      0.03      0.05     35.55      0.48      0.02      0.04    36.22
+prefill        2     0%     535      0.02      0.03      0.02     53.80      4.77      0.01      0.03    58.69
+
+Where the wall time went:
+  inbox              4 ms    0.1%
+  schedule          16 ms    0.4%
+  prepare           22 ms    0.5%
+  forward         1486 ms   36.3%
+  sample          2454 ms   59.9%
+  finish             9 ms    0.2%
+  deliver           17 ms    0.4%
+  gap               85 ms    2.1%   (between steps: GIL or idle)
+  graphed steps         3166 ms   77.4% of wall
+  split steps            724 ms   17.7% of wall
+  decode steps             0 ms    0.0% of wall
+  mixed steps              0 ms    0.0% of wall
+  prefill steps          117 ms    2.9% of wall
+
+Detokenize (HTTP thread): 202 ms over 8256 calls, 24 us per call, 4.9% of wall
+== concurrency 64
+conc=64         256/256    35.66    4564.0     129.5     697.5    12.77    13.40    43.92     2315.2
+553 steps over 7.51 s: 74 steps/s, 4369 tokens/s sampled, mean 13.59 ms per step
+
+Mean ms per step, by kind (tokens = tokens in the step):
+kind       steps  share  tokens     inbox  schedule   prepare   forward    sample    finish   deliver    total
+graphed      476    86%      61      0.01      0.09      0.15      2.86      5.73      0.04      0.07     8.96
+split         75    14%    1903      0.05      0.09      0.19     38.64      0.56      0.05      0.08    39.66
+prefill        2     0%     536      0.01      0.02      0.01     38.66      0.47      0.01      0.05    39.22
+
+Where the wall time went:
+  inbox              6 ms    0.1%
+  schedule          51 ms    0.7%
+  prepare           84 ms    1.1%
+  forward         4336 ms   57.7%
+  sample          2772 ms   36.9%
+  finish            25 ms    0.3%
+  deliver           42 ms    0.6%
+  gap              198 ms    2.6%   (between steps: GIL or idle)
+  graphed steps         4264 ms   56.7% of wall
+  split steps           2975 ms   39.6% of wall
+  decode steps             0 ms    0.0% of wall
+  mixed steps              0 ms    0.0% of wall
+  prefill steps           78 ms    1.0% of wall
+
+Detokenize (HTTP thread): 720 ms over 32832 calls, 22 us per call, 9.6% of wall
+== compare
+name, memory.total [MiB], driver_version
+NVIDIA GeForce RTX 4090, 24564 MiB, 595.91.07
+model=Qwen/Qwen2.5-0.5B-Instruct levels=1,4,16,64 input=512 output=128 dtype=bfloat16
+== vLLM
+  waiting for server on :8000 ...
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      3.36     430.5      29.2      31.9     2.11     2.12     4.33      300.9
+conc=4           64/64     12.82    1640.4      48.9      71.3     2.07     2.15     4.28      343.9
+conc=16          64/64     42.51    5441.5      86.1     139.9     2.27     2.54    11.65      410.1
+conc=64         256/256    93.49   11966.1     221.5     417.2     3.55     4.42    15.09      764.3
+
+Saved results to benchmarks/results/gpu/vllm-20261103-050557.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/vllm-20261103-050557.json
+== nanoserve
+  waiting for server on :8000 ...
+Model: Qwen/Qwen2.5-0.5B-Instruct   Server: http://localhost:8000
+Input ~512 tok (+/-0%), output 128 tok, shared prefix 0 tok
+
+load                  ok   req/s out tok/s  TTFT p50  TTFT p99 TPOT p50 TPOT p99  ITL p99    E2E p99
+                                                (ms)      (ms)     (ms)     (ms)     (ms)       (ms)
+conc=1           64/64      1.70     217.5      34.7      38.8     4.37     4.41    13.03      596.1
+conc=4           64/64      5.42     694.2      63.4      71.6     5.32     5.56    15.75      752.8
+conc=16          64/64     16.77    2146.8     104.6     192.9     6.64     7.05    33.92     1036.4
+conc=64         256/256    35.63    4561.1     129.8     700.2    12.96    13.36    42.91     2324.0
+
+Saved results to benchmarks/results/gpu/nanoserve-20261103-050725.json
+Plot with: python benchmarks/plot_results.py benchmarks/results/gpu/nanoserve-20261103-050725.json
+== Profiling a nanoserve decode step
+Fetching 7 files:   0%|          | 0/7 [00:00<?, ?it/s]Fetching 7 files: 100%|██████████| 7/7 [00:00<00:00, 985.97it/s]
+USDT:2026-11-03 05:07:38 5897:5897 SyncActivityProfilerHandler.cpp:39] profiler_start
+USDT:2026-11-03 05:07:38 5897:5897 SyncActivityProfilerHandler.cpp:46] profiler_stop
+
+Decode step (CUDA graphs, sdpa attention): batch 16, context ~512 tokens, 5.7 ms/step = 2819 tok/s
+
+GPU busy 5.0 ms of 5.7 ms per step (89% utilization), ~1507 kernel launches/step
+
+
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us      11.401ms        22.59%      11.401ms       9.501us          1200  
+fmha_cutlassF_bf16_aligned_64x64_rf_sm80(PyTorchMemE...         0.00%       0.000us         0.00%       0.000us       0.000us      10.710ms        21.22%      10.710ms      44.624us           240  
+void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_...         0.00%       0.000us         0.00%       0.000us       0.000us       6.002ms        11.89%       6.002ms      12.249us           490  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       4.180ms         8.28%       4.180ms       8.708us           480  
+                                               aten::mm         0.48%     325.890us         0.60%     409.840us      40.984us       3.090ms         6.12%       3.090ms     309.034us            10  
+void at::native::unrolled_elementwise_kernel<at::nat...         0.00%       0.000us         0.00%       0.000us       0.000us       2.669ms         5.29%       2.669ms       1.828us          1460  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       2.377ms         4.71%       2.377ms       2.476us           960  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us       1.764ms         3.49%       1.764ms       1.216us          1450  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us       1.241ms         2.46%       1.241ms       2.534us           490  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us       1.097ms         2.17%       1.097ms       2.284us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     910.666us         1.80%     910.666us       0.939us           970  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     825.191us         1.63%     825.191us       1.684us           490  
+void at::native::(anonymous namespace)::CatArrayBatc...         0.00%       0.000us         0.00%       0.000us       0.000us     805.607us         1.60%     805.607us       1.678us           480  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     591.720us         1.17%     591.720us       0.822us           720  
+void at::native::elementwise_kernel<128, 2, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     566.694us         1.12%     566.694us       1.181us           480  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 68.406ms
+Self CUDA time total: 50.473ms
+
+Trace written to benchmarks/results/gpu/nanoserve_decode_trace.json
+== Results
+Saved plot to benchmarks/results/gpu/vllm_vs_nanoserve.png
+  load |         output tok/s         |         TTFT p50 ms          |         TPOT p50 ms         
+       |      vllm nanoserve    ratio |      vllm nanoserve    ratio |      vllm nanoserve    ratio
+---------------------------------------------------------------------------------------------------
+     1 |       430       217    0.51x |        29        35    1.19x |       2.1       4.4    2.07x
+     4 |      1640       694    0.42x |        49        63    1.30x |       2.1       5.3    2.57x
+    16 |      5441      2147    0.39x |        86       105    1.21x |       2.3       6.6    2.93x
+    64 |     11966      4561    0.38x |       221       130    0.59x |       3.5      13.0    3.65x
+
+ratio = nanoserve / vllm. For tok/s higher is better; for latency lower is better.
+
+Done. Everything is in benchmarks/results/gpu/ -- copy it back and commit it.
+BENCH_EXIT=0

@@ -176,3 +176,28 @@ def test_detokenizer_holds_back_partial_utf8():
     assert detok.add(euro[0]) == ""
     assert detok.add(euro[1]) == ""
     assert detok.add(euro[2]) == "€"
+
+
+def test_detokenizer_deltas_add_up_to_full_decode():
+    """The windowed decode must emit exactly the full decode, split anywhere,
+    including multi-byte characters that span tokens."""
+    tok = CharTokenizer()
+    text = "KV cache → 12 KiB/token, ünïcode 漢字 and emoji 🚀 in one stream."
+    ids = tok.encode(text)
+    detok = Detokenizer(tok)
+    deltas = [detok.add(t, final=(i == len(ids) - 1)) for i, t in enumerate(ids)]
+    assert "".join(deltas) == text == detok.text
+    assert all("�" not in d for d in deltas)
+
+
+@pytest.mark.skipif(not __import__("os").environ.get("NANOSERVE_REAL_MODEL"),
+                    reason="set NANOSERVE_REAL_MODEL=1 to download a real tokenizer")
+def test_detokenizer_matches_full_decode_with_real_tokenizer():
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    text = ("Paged attention splits the KV cache into blocks.\n\n  Indented, 中文 text, "
+            "emoji 🚀🎉, numbers 3.14159 and code: `x = y[:, None]`.")
+    ids = tok.encode(text) + [tok.eos_token_id]
+    detok = Detokenizer(tok)
+    deltas = [detok.add(t, final=(i == len(ids) - 1)) for i, t in enumerate(ids)]
+    assert "".join(deltas) == tok.decode(ids, skip_special_tokens=True)
