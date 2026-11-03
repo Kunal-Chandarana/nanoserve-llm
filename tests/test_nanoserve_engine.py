@@ -147,3 +147,23 @@ def test_abort_frees_running_and_waiting_requests(model):
     assert engine.requests[ids[1]].output_ids == reference(model, [prompts[1]], 30)[0]
     assert engine.requests[ids[2]].output_ids == []
     assert_all_blocks_free(engine)
+
+
+def test_mixed_sampling_modes_in_one_batch(model):
+    """Greedy, unseeded random and seeded random requests share a batch. Greedy
+    rows still match the reference, seeded rows match the same seed run alone,
+    and unseeded rows produce valid tokens."""
+    greedy, seeded, unseeded = make_prompts([6, 7, 8])
+    alone = LLMEngine(model, SchedulerConfig(num_blocks=32, block_size=4))
+    expected_seeded = alone.generate([seeded], 10, temperature=0.8, seed=7)[0]
+
+    engine = LLMEngine(model, SchedulerConfig(num_blocks=32, block_size=4))
+    g = engine.add_request(greedy, 10)
+    s = engine.add_request(seeded, 10, temperature=0.8, seed=7)
+    u = engine.add_request(unseeded, 10, temperature=0.8)
+    while engine.has_unfinished_requests():
+        engine.step()
+    assert engine.requests[g].output_ids == reference(model, [greedy], 10)[0]
+    assert engine.requests[s].output_ids == expected_seeded
+    assert len(engine.requests[u].output_ids) == 10
+    assert all(0 <= t < model.config.vocab_size for t in engine.requests[u].output_ids)

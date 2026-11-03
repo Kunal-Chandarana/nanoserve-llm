@@ -354,8 +354,8 @@ def main():
     parser.add_argument("--max-num-batched-tokens", type=int, default=2048)
     parser.add_argument("--enforce-eager", action="store_true",
                         help="Don't use CUDA graphs for decode (on by default on CUDA, as in vLLM)")
-    parser.add_argument("--attention-backend", default="auto", choices=["auto", "triton", "sdpa"],
-                        help="Decode attention: Triton paged kernel or padded gather + SDPA (auto: triton on CUDA)")
+    parser.add_argument("--attention-backend", default="sdpa", choices=["sdpa", "triton"],
+                        help="Decode attention: padded gather + SDPA, or the Triton paged kernel")
     args = parser.parse_args()
 
     dtype = getattr(torch, args.dtype)

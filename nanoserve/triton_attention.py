@@ -22,6 +22,14 @@ multiply-and-sum rather than tl.dot: no tensor cores needed, and no 16-wide
 minimum on block size, group size or head dim.
 
 Prefill still uses SDPA: it's compute-bound and the gather matters less.
+
+Measured on an RTX 4090 (step 8): the same cost per decode step as gather +
+SDPA at batch 16 and 64 with ~512-token contexts, and slower at batch 1. With
+one sequence there are only num_kv_heads programs (2 for Qwen2.5-0.5B), each
+walking every block in turn, so most of the GPU sits idle. vLLM's kernels
+split long contexts across more programs and merge the partial softmaxes
+("split-K" / flash-decoding); that's the missing piece. Until then it's
+opt-in (attention_backend="triton").
 """
 
 import torch

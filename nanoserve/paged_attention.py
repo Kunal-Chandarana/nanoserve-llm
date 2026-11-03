@@ -98,11 +98,13 @@ class AttentionBatch:
 
 class PagedKVCache:
     def __init__(self, config: ModelConfig, num_blocks: int, block_size: int,
-                 dtype: torch.dtype, device: str, attention_backend: str = "auto"):
+                 dtype: torch.dtype, device: str, attention_backend: str = "sdpa"):
         """attention_backend: how decode steps (one new token per sequence)
-        attend. "triton" follows the block table inside a kernel
-        (triton_attention.py); "sdpa" gathers blocks into a padded tensor and
-        calls SDPA; "auto" picks triton when it can run. Prefill always uses SDPA."""
+        attend. "sdpa" gathers blocks into a padded tensor and calls SDPA;
+        "triton" follows the block table inside a kernel (triton_attention.py).
+        SDPA is the default: at the context lengths measured so far the two
+        cost the same per step, and the kernel is slower at batch 1 (see its
+        docstring). Prefill always uses SDPA."""
         # One extra physical block that the allocator never hands out. CUDA
         # graphs pad their batch with dummy rows; those rows write their K/V
         # here, so they can't touch a real sequence.
@@ -118,12 +120,11 @@ class PagedKVCache:
         self._step: List[Tuple[int, int]] = []  # (seq_id, num_new_tokens)
         self._slot_mapping = None
         self._batches: List[AttentionBatch] = []
-        if attention_backend not in ("auto", "triton", "sdpa"):
+        if attention_backend not in ("triton", "sdpa"):
             raise ValueError(f"unknown attention backend {attention_backend!r}")
-        can_triton = triton_attention.supported(self.k[0])
-        if attention_backend == "triton" and not can_triton:
+        self.use_triton = attention_backend == "triton"
+        if self.use_triton and not triton_attention.supported(self.k[0]):
             raise ValueError("triton attention needs Triton, a CUDA device and power-of-two block size and head dim")
-        self.use_triton = can_triton and attention_backend != "sdpa"
 
     # ---- sequence lifecycle -------------------------------------------------
 

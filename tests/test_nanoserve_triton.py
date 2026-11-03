@@ -90,8 +90,8 @@ def test_engine_output_matches_sdpa_backend(cuda_graphs):
     assert engine.generate(prompts, 12) == sdpa
 
 
-def test_auto_picks_triton_on_cuda_and_sdpa_on_cpu():
-    model = tiny_pair(True)[1]
-    assert not LLMEngine(model, SchedulerConfig(num_blocks=8, block_size=4)).cache.use_triton
-    gpu = LLMEngine(model.cuda(), SchedulerConfig(num_blocks=8, block_size=4), cuda_graphs=False)
-    assert gpu.cache.use_triton
+def test_sdpa_is_the_default_and_triton_is_opt_in():
+    model = tiny_pair(True)[1].cuda()
+    config = SchedulerConfig(num_blocks=8, block_size=4)
+    assert not LLMEngine(model, config, cuda_graphs=False).cache.use_triton
+    assert LLMEngine(model, config, cuda_graphs=False, attention_backend="triton").cache.use_triton

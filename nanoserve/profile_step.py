@@ -34,7 +34,7 @@ def main():
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--trace", help="Write a Chrome trace (open in chrome://tracing or Perfetto)")
     parser.add_argument("--enforce-eager", action="store_true", help="Don't use CUDA graphs for decode")
-    parser.add_argument("--attention-backend", default="auto", choices=["auto", "triton", "sdpa"])
+    parser.add_argument("--attention-backend", default="sdpa", choices=["sdpa", "triton"])
     args = parser.parse_args()
 
     model = load_model(args.model, getattr(torch, args.dtype), args.device)
